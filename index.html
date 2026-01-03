@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Audiobook Player</title>
     
     <!-- React & ReactDOM -->
@@ -84,10 +86,11 @@
             -webkit-backdrop-filter: blur(20px);
             border: 1px solid rgba(255, 255, 255, 0.2);
         }
-        .dark-glass {
-            background: rgba(0, 0, 0, 0.6);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
+        .safe-area-top {
+            padding-top: env(safe-area-inset-top);
+        }
+        .safe-area-bottom {
+            padding-bottom: env(safe-area-inset-bottom);
         }
         #viewer iframe {
             background: white; 
@@ -101,7 +104,6 @@
         const { useState, useEffect, useRef, useMemo, useCallback } = React;
 
         // --- DATABASE LAYER (IndexedDB) ---
-        // Storing large audio files requires IndexedDB. LocalStorage is too small.
         const DB_NAME = 'AudiobookPlayerDB';
         const DB_VERSION = 1;
 
@@ -150,14 +152,9 @@
         };
 
         const deleteBook = async (bookId) => {
-            // In a real app we would query files by bookId index and delete them
-            // For this simpler version, we just delete the book meta. 
-            // Files might be orphaned in IDB in this simplified logic to save code lines, 
-            // but we'll try to do it right.
             const db = await openDB();
             const tx = db.transaction(['books'], 'readwrite');
             tx.objectStore('books').delete(bookId);
-            // Cleaning up files is complex without an index, skipping for brevity in this demo
             return new Promise(resolve => tx.oncomplete = resolve);
         };
 
@@ -185,20 +182,40 @@
 
         const FileUpload = ({ onComplete, onCancel }) => {
             const [processing, setProcessing] = useState(false);
+            const [status, setStatus] = useState("");
 
             const handleFiles = async (e) => {
                 setProcessing(true);
+                setStatus("Analyzing files...");
                 const fileList = Array.from(e.target.files);
                 
-                const audioFiles = fileList.filter(f => f.type.startsWith('audio/')).sort((a,b) => a.name.localeCompare(b.name));
-                const epubFile = fileList.find(f => f.name.endsWith('.epub') || f.type === 'application/epub+zip');
-                const imageFile = fileList.find(f => f.type.startsWith('image/'));
+                // Helper to check file types robustly for iOS
+                const isAudio = (file) => {
+                    return file.type.startsWith('audio/') || 
+                           /\.(mp3|wav|m4a|aac|ogg|flac)$/i.test(file.name);
+                };
+
+                const isImage = (file) => {
+                    return file.type.startsWith('image/') || 
+                           /\.(jpg|jpeg|png|webp|bmp)$/i.test(file.name);
+                };
+
+                const isEpub = (file) => {
+                    return file.type === 'application/epub+zip' || 
+                           /\.epub$/i.test(file.name);
+                };
+
+                const audioFiles = fileList.filter(isAudio).sort((a,b) => a.name.localeCompare(b.name));
+                const epubFile = fileList.find(isEpub);
+                const imageFile = fileList.find(isImage);
 
                 if (audioFiles.length === 0) {
-                    alert("Please select at least one audio file.");
+                    alert("No audio files detected. Please ensure your files end in .mp3, .wav, or .m4a");
                     setProcessing(false);
                     return;
                 }
+
+                setStatus(`Importing ${audioFiles.length} audio tracks...`);
 
                 const bookId = crypto.randomUUID();
                 const fileRecords = [];
@@ -207,29 +224,30 @@
                 const tracks = audioFiles.map((f, i) => {
                     const id = crypto.randomUUID();
                     fileRecords.push({ id, bookId, data: f, type: 'audio' });
-                    return { id, name: f.name, duration: 0, index: i }; // Duration logic omitted for speed
+                    return { id, name: f.name, duration: 0, index: i }; 
                 });
 
                 // Process Epub
                 let epubId = null;
                 if (epubFile) {
+                    setStatus("Processing book text...");
                     epubId = crypto.randomUUID();
                     fileRecords.push({ id: epubId, bookId, data: epubFile, type: 'epub' });
                 }
 
                 // Process Cover
                 let coverId = null;
-                let coverBlob = null;
                 if (imageFile) {
                     coverId = crypto.randomUUID();
                     fileRecords.push({ id: coverId, bookId, data: imageFile, type: 'image' });
-                    // Store blob in memory for immediate UI update? No, rely on IDB fetch.
                 }
 
+                setStatus("Saving to library...");
+                
                 const newBook = {
                     id: bookId,
-                    title: audioFiles[0].name.replace(/\.[^/.]+$/, "").replace(/^\d+\s*[-_.]?\s*/, ""), // Simple clean
-                    author: "Unknown Author", // Could extract from ID3 tags if we had a library
+                    title: audioFiles[0].name.replace(/\.[^/.]+$/, "").replace(/^\d+\s*[-_.]?\s*/, ""), 
+                    author: "Unknown Author", 
                     addedAt: Date.now(),
                     tracks,
                     epubId,
@@ -239,6 +257,7 @@
                 };
 
                 await saveBook(newBook, fileRecords);
+                setProcessing(false);
                 onComplete();
             };
 
@@ -256,21 +275,21 @@
                         {processing ? (
                             <div className="flex flex-col items-center gap-2">
                                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                                <span className="text-sm text-gray-400">Importing files...</span>
+                                <span className="text-sm text-gray-400">{status}</span>
                             </div>
                         ) : (
                             <div className="space-y-3">
-                                <label className="block w-full cursor-pointer bg-ios-blue text-white font-semibold py-3 px-4 rounded-xl hover:bg-blue-600 transition">
+                                <label className="block w-full cursor-pointer bg-ios-blue text-white font-semibold py-3 px-4 rounded-xl hover:bg-blue-600 transition shadow-lg active:scale-95 transform">
                                     Select Files
                                     <input 
                                         type="file" 
                                         multiple 
-                                        accept="audio/*, .epub, image/*" 
+                                        accept=".mp3,.wav,.m4a,.aac,.ogg,.epub,.jpg,.jpeg,.png,audio/*,image/*"
                                         className="hidden" 
                                         onChange={handleFiles}
                                     />
                                 </label>
-                                <button onClick={onCancel} className="block w-full py-3 px-4 text-gray-500 font-medium">Cancel</button>
+                                <button onClick={onCancel} className="block w-full py-3 px-4 text-gray-500 font-medium hover:text-gray-800">Cancel</button>
                             </div>
                         )}
                     </div>
@@ -310,53 +329,56 @@
             }
 
             return (
-                <div className="p-6 pb-24 max-w-5xl mx-auto min-h-screen">
-                    <header className="flex justify-between items-center mb-8 mt-2">
-                        <h1 className="text-3xl font-bold text-slate-900">Library</h1>
+                <div className="p-6 pb-24 max-w-5xl mx-auto min-h-screen safe-area-top">
+                    <header className="flex justify-between items-center mb-8 mt-4">
+                        <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Library</h1>
                         <button 
                             onClick={() => setShowUpload(true)}
-                            className="text-ios-blue hover:bg-blue-50 p-2 rounded-full transition"
+                            className="text-ios-blue bg-blue-50 hover:bg-blue-100 p-2.5 rounded-full transition shadow-sm"
                         >
-                            <Icon name="plus" size={28} />
+                            <Icon name="plus" size={24} />
                         </button>
                     </header>
 
                     {books.length === 0 ? (
-                        <div className="text-center mt-20 text-gray-400">
-                            <Icon name="headphones" size={48} className="mx-auto mb-4 opacity-50" />
-                            <p className="text-lg">No audiobooks yet.</p>
-                            <button onClick={() => setShowUpload(true)} className="mt-4 text-ios-blue font-medium">Add your first book</button>
+                        <div className="flex flex-col items-center justify-center mt-32 text-gray-400">
+                            <div className="bg-white p-6 rounded-3xl shadow-ios mb-6">
+                                <Icon name="headphones" size={48} className="text-blue-400 opacity-80" />
+                            </div>
+                            <p className="text-xl font-medium text-gray-600">No Audiobooks</p>
+                            <p className="text-sm text-gray-400 mt-2 max-w-xs text-center">Tap the + button to upload MP3, WAV, or EPUB files.</p>
+                            <button onClick={() => setShowUpload(true)} className="mt-8 text-ios-blue font-semibold bg-white px-6 py-2 rounded-full shadow-sm">Add Book</button>
                         </div>
                     ) : (
-                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-8">
                             {books.map(book => (
                                 <div 
                                     key={book.id} 
                                     onClick={() => onSelectBook(book.id)}
                                     className="group relative cursor-pointer"
                                 >
-                                    <div className="aspect-square rounded-2xl overflow-hidden bg-gray-200 shadow-ios mb-3 relative group-hover:shadow-ios-hover transition-all duration-300">
+                                    <div className="aspect-square rounded-xl overflow-hidden bg-white shadow-ios mb-3 relative group-hover:shadow-ios-hover transition-all duration-300 ring-1 ring-black/5">
                                         {covers[book.id] ? (
                                             <img src={covers[book.id]} className="w-full h-full object-cover" />
                                         ) : (
-                                            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-blue-100 to-indigo-100">
-                                                <Icon name="music" className="text-blue-300" size={40} />
+                                            <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200">
+                                                <Icon name="music" className="text-slate-300" size={40} />
                                             </div>
                                         )}
                                         {/* Play Overlay */}
-                                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition flex items-center justify-center">
-                                            <div className="bg-white/90 rounded-full p-3 opacity-0 group-hover:opacity-100 transform translate-y-2 group-hover:translate-y-0 transition">
-                                                <Icon name="play" size={20} className="fill-current text-black ml-1" />
+                                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition flex items-center justify-center">
+                                            <div className="bg-white/95 rounded-full p-3 opacity-0 group-hover:opacity-100 shadow-lg transform translate-y-2 group-hover:translate-y-0 transition duration-300">
+                                                <Icon name="play" size={24} className="fill-current text-slate-800 ml-1" />
                                             </div>
                                         </div>
                                     </div>
-                                    <h3 className="font-semibold text-slate-900 leading-tight truncate">{book.title}</h3>
+                                    <h3 className="font-semibold text-slate-900 leading-snug truncate pr-6">{book.title}</h3>
                                     <p className="text-sm text-gray-500 truncate">{book.author}</p>
                                     <button 
                                         onClick={(e) => handleDelete(e, book.id)}
-                                        className="absolute top-2 right-2 bg-white/80 p-1.5 rounded-full opacity-0 group-hover:opacity-100 transition hover:bg-red-100 hover:text-red-600"
+                                        className="absolute top-2 right-2 bg-white/90 p-1.5 rounded-full opacity-0 group-hover:opacity-100 transition shadow-sm hover:text-red-500"
                                     >
-                                        <Icon name="trash-2" size={16} />
+                                        <Icon name="trash-2" size={14} />
                                     </button>
                                 </div>
                             ))}
@@ -368,7 +390,7 @@
             );
         };
 
-        const EpubReader = ({ epubId, onClose, initialLocation }) => {
+        const EpubReader = ({ epubId, onClose }) => {
             const viewerRef = useRef(null);
             const [rendition, setRendition] = useState(null);
             const [loading, setLoading] = useState(true);
@@ -387,7 +409,7 @@
                         flow: "paginated"
                     });
                     
-                    rend.display(initialLocation || undefined).then(() => {
+                    rend.display().then(() => {
                         setLoading(false);
                     });
 
@@ -395,35 +417,32 @@
                     rend.themes.default({
                         "body": { 
                             "font-family": "-apple-system, BlinkMacSystemFont, sans-serif !important",
-                            "color": "#333 !important",
-                            "padding": "0 10px !important"
+                            "color": "#1c1c1e !important",
+                            "padding": "0 20px !important",
+                            "line-height": "1.6 !important"
                         },
                         "p": {
-                            "font-size": "18px !important",
-                            "line-height": "1.6 !important"
+                            "font-size": "19px !important",
+                            "margin-bottom": "1em !important"
                         }
                     });
 
                     setRendition(rend);
                 };
                 loadEpub();
-
-                return () => {
-                    // Cleanup if needed
-                };
             }, [epubId]);
 
             const prevPage = () => rendition && rendition.prev();
             const nextPage = () => rendition && rendition.next();
 
             return (
-                <div className="fixed inset-0 z-40 bg-white flex flex-col">
-                    <div className="h-14 border-b flex items-center justify-between px-4 bg-gray-50">
-                        <button onClick={onClose} className="text-ios-blue font-medium">Done</button>
+                <div className="fixed inset-0 z-50 bg-white flex flex-col animate-in slide-in-from-bottom duration-300">
+                    <div className="h-14 border-b flex items-center justify-between px-4 bg-gray-50 safe-area-top">
+                        <button onClick={onClose} className="text-ios-blue font-semibold text-lg">Done</button>
                         <span className="font-semibold text-sm text-gray-600">Reader</span>
                         <div className="w-10"></div>
                     </div>
-                    <div className="flex-1 relative overflow-hidden bg-white">
+                    <div className="flex-1 relative overflow-hidden bg-white safe-area-bottom">
                          {loading && (
                              <div className="absolute inset-0 flex items-center justify-center">
                                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-300"></div>
@@ -432,8 +451,8 @@
                         <div ref={viewerRef} id="viewer" className="w-full h-full"></div>
                         
                         {/* Tap zones for navigation */}
-                        <div className="absolute inset-y-0 left-0 w-16 z-10 cursor-pointer" onClick={prevPage}></div>
-                        <div className="absolute inset-y-0 right-0 w-16 z-10 cursor-pointer" onClick={nextPage}></div>
+                        <div className="absolute inset-y-0 left-0 w-20 z-10 cursor-pointer" onClick={prevPage}></div>
+                        <div className="absolute inset-y-0 right-0 w-20 z-10 cursor-pointer" onClick={nextPage}></div>
                     </div>
                 </div>
             );
@@ -450,7 +469,6 @@
             const [showReader, setShowReader] = useState(false);
             const [loadingTrack, setLoadingTrack] = useState(false);
 
-            // Fetch book metadata and cover
             useEffect(() => {
                 const init = async () => {
                     const b = await dbOp('readonly', 'books', s => s.get(bookId));
@@ -465,7 +483,6 @@
                 init();
             }, [bookId]);
 
-            // Load audio source when track changes
             useEffect(() => {
                 if (!book) return;
                 
@@ -478,6 +495,8 @@
                     if (fileRec) {
                         const url = URL.createObjectURL(fileRec.data);
                         audioRef.current.src = url;
+                        // Only set currentTime if it's the saved track, otherwise 0
+                        // For simplicity in this demo we trust book.currentTime is correct for the current track
                         audioRef.current.currentTime = book.currentTime || 0;
                         if (isPlaying) {
                             try {
@@ -490,9 +509,9 @@
                     setLoadingTrack(false);
                 };
                 loadAudio();
-            }, [book?.currentTrackIndex]); // Only reload if track index changes
+            }, [book?.currentTrackIndex]); 
 
-            // Save Progress Debounced
+            // Save Progress
             useEffect(() => {
                 if(!book) return;
                 const timer = setInterval(() => {
@@ -501,11 +520,9 @@
                              ...book,
                              currentTime: audioRef.current.currentTime
                          };
-                         // Update local state lightly
-                         // Update DB
                          dbOp('readwrite', 'books', s => s.put(updatedBook));
                     }
-                }, 5000);
+                }, 2000);
                 return () => clearInterval(timer);
             }, [book]);
 
@@ -537,10 +554,8 @@
 
             const changeTrack = async (index) => {
                 if (index < 0 || index >= book.tracks.length) return;
-                
-                // Save current progress before switching? (Maybe optional)
                 const newBook = { ...book, currentTrackIndex: index, currentTime: 0 };
-                setBook(newBook); // triggers useEffect
+                setBook(newBook); 
                 await dbOp('readwrite', 'books', s => s.put(newBook));
             };
 
@@ -555,23 +570,23 @@
             if (!book) return <div className="h-screen flex items-center justify-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div></div>;
 
             return (
-                <div className="h-screen flex flex-col bg-ios-bg">
+                <div className="h-screen flex flex-col bg-ios-bg safe-area-top safe-area-bottom">
                     {/* Top Bar */}
-                    <div className="h-14 flex items-center justify-between px-6 mt-2 z-10">
-                        <button onClick={onBack} className="p-2 -ml-2 rounded-full hover:bg-black/5 transition text-gray-600">
-                            <Icon name="chevron-down" size={28} />
+                    <div className="h-16 flex items-center justify-between px-6 pt-2 z-10">
+                        <button onClick={onBack} className="p-2 -ml-2 rounded-full hover:bg-black/5 transition text-gray-600 active:scale-95">
+                            <Icon name="chevron-down" size={30} />
                         </button>
-                        <span className="text-xs uppercase tracking-widest text-gray-500 font-semibold">Now Playing</span>
+                        <span className="text-xs uppercase tracking-widest text-gray-400 font-bold">Now Playing</span>
                         <button onClick={() => setShowPlaylist(!showPlaylist)} className={`p-2 -mr-2 rounded-full transition ${showPlaylist ? 'bg-blue-100 text-ios-blue' : 'text-gray-600 hover:bg-black/5'}`}>
                             <Icon name="list" size={24} />
                         </button>
                     </div>
 
                     {/* Main Content Area */}
-                    <div className="flex-1 flex flex-col items-center justify-center p-8 relative overflow-hidden">
+                    <div className="flex-1 flex flex-col items-center justify-center px-8 relative overflow-hidden pb-8">
                         
                         {/* Artwork */}
-                        <div className={`w-full max-w-sm aspect-square rounded-3xl shadow-2xl mb-10 overflow-hidden relative transform transition-all duration-500 ${isPlaying ? 'scale-100' : 'scale-90 opacity-90'}`}>
+                        <div className={`w-full max-w-sm aspect-square rounded-3xl shadow-2xl mb-8 overflow-hidden relative transform transition-all duration-700 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${isPlaying ? 'scale-100 shadow-ios-hover' : 'scale-[0.85] opacity-90 shadow-ios'}`}>
                             {coverUrl ? (
                                 <img src={coverUrl} className="w-full h-full object-cover" />
                             ) : (
@@ -582,12 +597,16 @@
                         </div>
 
                         {/* Info */}
-                        <div className="w-full max-w-sm mb-8 text-center">
-                            <h2 className="text-2xl font-bold text-slate-900 mb-1 truncate">{book.title}</h2>
-                            <p className="text-gray-500 text-lg truncate">{book.author}</p>
-                            <p className="text-xs text-ios-blue mt-1 font-medium bg-blue-50 inline-block px-2 py-0.5 rounded-md">
-                                {book.tracks[book.currentTrackIndex]?.name}
-                            </p>
+                        <div className="w-full max-w-sm mb-6 text-center">
+                            <div className="flex flex-col h-20 justify-center">
+                                <h2 className="text-2xl font-bold text-slate-900 mb-1 leading-tight line-clamp-2">{book.title}</h2>
+                                <p className="text-gray-500 text-lg truncate">{book.author}</p>
+                            </div>
+                            <div className="h-6 mt-1">
+                                <p className="text-xs text-ios-blue font-semibold bg-blue-50/80 inline-block px-3 py-1 rounded-full truncate max-w-full">
+                                    {book.tracks[book.currentTrackIndex]?.name}
+                                </p>
+                            </div>
                         </div>
 
                         {/* Seek Bar */}
@@ -598,8 +617,8 @@
                                 max={duration || 100} 
                                 value={currentTime} 
                                 onChange={handleSeek}
-                                className="w-full h-1 bg-gray-300 rounded-lg appearance-none cursor-pointer"
-                                style={{background: `linear-gradient(to right, #5c5c5e 0%, #5c5c5e ${(currentTime/duration)*100}%, #d1d1d6 ${(currentTime/duration)*100}%, #d1d1d6 100%)`}}
+                                className="w-full h-1.5 bg-gray-300/50 rounded-lg appearance-none cursor-pointer"
+                                style={{background: `linear-gradient(to right, #8e8e93 0%, #8e8e93 ${(currentTime/duration)*100}%, #d1d1d6 ${(currentTime/duration)*100}%, #d1d1d6 100%)`}}
                             />
                             <div className="flex justify-between text-xs text-gray-400 mt-2 font-medium font-mono">
                                 <span>{formatTime(currentTime)}</span>
@@ -608,22 +627,22 @@
                         </div>
 
                         {/* Controls */}
-                        <div className="flex items-center justify-between w-full max-w-xs mb-8">
-                            <button onClick={() => skip(-30)} className="text-slate-800 hover:text-slate-600 transition p-2 flex flex-col items-center gap-1">
-                                <Icon name="rotate-ccw" size={32} />
-                                <span className="text-[10px] font-bold">30</span>
+                        <div className="flex items-center justify-between w-full max-w-[280px] mb-8">
+                            <button onClick={() => skip(-30)} className="text-slate-800 hover:text-slate-600 active:scale-90 transition p-4 flex flex-col items-center gap-1">
+                                <Icon name="rotate-ccw" size={32} strokeWidth={1.5} />
+                                <span className="text-[10px] font-bold absolute mt-9">30</span>
                             </button>
                             
                             <button 
                                 onClick={togglePlay} 
-                                className="w-20 h-20 bg-slate-900 text-white rounded-full flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition"
+                                className="w-20 h-20 bg-slate-900 text-white rounded-full flex items-center justify-center shadow-xl hover:scale-105 active:scale-95 transition-all duration-200"
                             >
                                 <Icon name={isPlaying ? "pause" : "play"} size={36} className="fill-current ml-1" />
                             </button>
 
-                            <button onClick={() => skip(300)} className="text-slate-800 hover:text-slate-600 transition p-2 flex flex-col items-center gap-1">
-                                <Icon name="rotate-cw" size={32} />
-                                <span className="text-[10px] font-bold">5m</span>
+                            <button onClick={() => skip(300)} className="text-slate-800 hover:text-slate-600 active:scale-90 transition p-4 flex flex-col items-center gap-1">
+                                <Icon name="rotate-cw" size={32} strokeWidth={1.5} />
+                                <span className="text-[10px] font-bold absolute mt-9">5m</span>
                             </button>
                         </div>
                         
@@ -631,30 +650,30 @@
                         {book.epubId && (
                             <button 
                                 onClick={() => setShowReader(true)}
-                                className="flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
+                                className="flex items-center gap-2 bg-white/80 backdrop-blur px-5 py-2.5 rounded-full shadow-sm border border-black/5 text-sm font-semibold text-gray-700 hover:bg-white transition active:scale-95"
                             >
-                                <Icon name="book-open" size={16} />
-                                Read Chapter
+                                <Icon name="book-open" size={18} />
+                                Read Book
                             </button>
                         )}
                     </div>
 
                     {/* Playlist Overlay */}
                     {showPlaylist && (
-                        <div className="absolute inset-0 z-20 flex flex-col justify-end bg-black/20 backdrop-blur-sm" onClick={() => setShowPlaylist(false)}>
-                            <div className="bg-white/90 backdrop-blur-xl rounded-t-3xl h-2/3 p-6 shadow-2xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
-                                <div className="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-6"></div>
-                                <h3 className="text-lg font-bold mb-4 px-2">Chapters / Tracks</h3>
-                                <div className="overflow-y-auto no-scrollbar flex-1 space-y-1">
+                        <div className="absolute inset-0 z-20 flex flex-col justify-end bg-black/20 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setShowPlaylist(false)}>
+                            <div className="bg-white/80 backdrop-blur-xl rounded-t-3xl h-[70%] p-6 shadow-2xl overflow-hidden flex flex-col animate-in slide-in-from-bottom duration-300" onClick={e => e.stopPropagation()}>
+                                <div className="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-6 opacity-50"></div>
+                                <h3 className="text-lg font-bold mb-4 px-2">Chapters</h3>
+                                <div className="overflow-y-auto no-scrollbar flex-1 space-y-2 pb-10">
                                     {book.tracks.map((track, idx) => (
                                         <div 
                                             key={track.id}
                                             onClick={() => { changeTrack(idx); setShowPlaylist(false); }}
-                                            className={`p-3 rounded-xl flex items-center gap-3 cursor-pointer ${idx === book.currentTrackIndex ? 'bg-gray-100 text-ios-blue font-semibold' : 'hover:bg-gray-50 text-gray-700'}`}
+                                            className={`p-4 rounded-xl flex items-center gap-3 cursor-pointer transition active:scale-[0.98] ${idx === book.currentTrackIndex ? 'bg-white shadow-sm text-ios-blue font-semibold ring-1 ring-black/5' : 'hover:bg-white/50 text-gray-700'}`}
                                         >
-                                            <span className="text-xs w-6 text-gray-400">{idx + 1}</span>
-                                            <span className="truncate flex-1">{track.name}</span>
-                                            {idx === book.currentTrackIndex && <Icon name="bar-chart-2" size={16} />}
+                                            <span className="text-xs w-6 text-gray-400 font-mono">{idx + 1}</span>
+                                            <span className="truncate flex-1 text-base">{track.name}</span>
+                                            {idx === book.currentTrackIndex && <Icon name="bar-chart-2" size={18} />}
                                         </div>
                                     ))}
                                 </div>
@@ -675,7 +694,6 @@
                         <EpubReader 
                             epubId={book.epubId} 
                             onClose={() => setShowReader(false)} 
-                            initialLocation={null} 
                         />
                     )}
                 </div>
@@ -692,10 +710,10 @@
             };
 
             return (
-                <>
+                <div className="h-full w-full">
                     {view === 'library' && <Library onSelectBook={handleSelectBook} />}
                     {view === 'player' && <Player bookId={currentBookId} onBack={() => setView('library')} />}
-                </>
+                </div>
             );
         };
 
@@ -704,4 +722,3 @@
     </script>
 </body>
 </html>
-
