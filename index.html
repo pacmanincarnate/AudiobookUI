@@ -35,10 +35,14 @@
                     },
                     boxShadow: { 'ios': '0 2px 12px rgba(0,0,0,0.06)', 'ios-float': '0 8px 30px rgba(0,0,0,0.12)' },
                     keyframes: {
-                        slideUp: { '0%': { transform: 'translateY(100%)', opacity: 0 }, '100%': { transform: 'translateY(0)', opacity: 1 } }
+                        slideUp: { '0%': { transform: 'translateY(100%)', opacity: 0 }, '100%': { transform: 'translateY(0)', opacity: 1 } },
+                        fadeIn: { '0%': { opacity: 0 }, '100%': { opacity: 1 } },
+                        slideInRight: { '0%': { transform: 'translateX(100%)' }, '100%': { transform: 'translateX(0)' } }
                     },
                     animation: { 
-                        slideUp: 'slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards'
+                        slideUp: 'slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+                        fadeIn: 'fadeIn 0.2s ease-out forwards',
+                        slideInRight: 'slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards'
                     }
                 }
             }
@@ -57,7 +61,8 @@
         input[type=range]::-webkit-slider-runnable-track {
             width: 100%; height: 4px; background: rgba(0,0,0,0.1); border-radius: 2px;
         }
-        select { -webkit-appearance: none; appearance: none; }
+        /* Dialogue Highlight Style */
+        .dialogue-text { display: inline; color: inherit; }
     </style>
 </head>
 <body class="bg-ios-bg text-slate-900 h-screen w-screen overflow-hidden select-none">
@@ -69,21 +74,7 @@
         // --- GEMINI API CONFIG ---
         const getEffectiveApiKey = () => localStorage.getItem('gemini_api_key') || '';
 
-        // --- AUDIO UTILS (PCM to WAV) ---
-        const pcmToWav = (pcmData, sampleRate = 24000) => {
-            const buffer = new ArrayBuffer(44 + pcmData.byteLength);
-            const view = new DataView(buffer);
-            const writeString = (offset, string) => { for (let i = 0; i < string.length; i++) view.setUint8(offset + i, string.charCodeAt(i)); };
-            writeString(0, 'RIFF'); view.setUint32(4, 36 + pcmData.byteLength, true); writeString(8, 'WAVE'); writeString(12, 'fmt ');
-            view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, sampleRate, true);
-            view.setUint32(28, sampleRate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true); writeString(36, 'data');
-            view.setUint32(40, pcmData.byteLength, true);
-            const pcmView = new Uint8Array(pcmData);
-            const wavView = new Uint8Array(buffer, 44);
-            wavView.set(pcmView);
-            return buffer;
-        };
-
+        // --- TEXT UTILS ---
         const chunkText = (text, maxLength = 3000) => {
             if (!text) return [];
             const chunks = [];
@@ -113,7 +104,8 @@
             const key = getEffectiveApiKey();
             if (!key) throw new Error("API Key missing");
             const safeText = text.length > 4000 ? text.substring(0, 4000) : text;
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${key}`;
+            
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-tts:generateContent?key=${key}`;
             const payload = { 
                 contents: [{ parts: [{ text: safeText }] }], 
                 generationConfig: { 
@@ -121,28 +113,26 @@
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } } 
                 } 
             };
+            
             const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+            
             if (!response.ok) {
                 const err = await response.json().catch(() => ({}));
                 throw new Error(err.error?.message || `API Error: ${response.status}`);
             }
+            
             const data = await response.json();
             const inlineData = data.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+            
             if (!inlineData || !inlineData.data) throw new Error("No audio data returned");
             
-            // Extract Dynamic Sample Rate
             let sampleRate = 24000; 
             if (inlineData.mimeType) {
                 const rateMatch = inlineData.mimeType.match(/rate=(\d+)/);
                 if (rateMatch) sampleRate = parseInt(rateMatch[1], 10);
             }
 
-            const binaryString = window.atob(inlineData.data.replace(/\s/g, ''));
-            const len = binaryString.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
-            const wavBuffer = pcmToWav(bytes.buffer, sampleRate);
-            return URL.createObjectURL(new Blob([wavBuffer], { type: 'audio/wav' }));
+            return { base64: inlineData.data, sampleRate };
         };
 
         const callGeminiSummary = async (text) => {
@@ -219,21 +209,42 @@
 
         const SettingsModal = ({ onClose }) => {
             const [key, setKey] = useState(getEffectiveApiKey());
+            const [status, setStatus] = useState("Test Browser Audio");
+
             const testAudio = async () => {
-                const ctx = new (window.AudioContext || window.webkitAudioContext)();
-                const osc = ctx.createOscillator();
-                osc.connect(ctx.destination);
-                osc.start();
-                osc.stop(ctx.currentTime + 0.2);
-                alert("If you heard a beep, audio is working!");
+                setStatus("Playing...");
+                try {
+                    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                    // iOS Unlock
+                    if (ctx.state === 'suspended') await ctx.resume();
+                    
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.frequency.value = 660;
+                    osc.start();
+                    gain.gain.exponentialRampToValueAtTime(0.00001, ctx.currentTime + 0.5);
+                    osc.stop(ctx.currentTime + 0.5);
+                    setTimeout(() => setStatus("Success!"), 500);
+                } catch(e) {
+                    setStatus("Failed: " + e.message);
+                }
             };
+
             return (
                 <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in">
                     <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-2xl">
                         <h3 className="text-xl font-bold mb-4">Settings</h3>
                         <label className="block text-sm font-medium text-gray-700 mb-2">Google Gemini API Key</label>
                         <input type="password" value={key} onChange={e => setKey(e.target.value)} placeholder="AIzaSy..." className="w-full p-3 border rounded-xl bg-gray-50 mb-4 font-mono text-sm" />
-                        <div className="bg-gray-50 p-3 rounded-xl mb-6"><button onClick={testAudio} className="text-ios-blue text-sm font-medium flex items-center gap-2"><Icon name="volume-2" size={16} /> Test Browser Audio</button></div>
+                        
+                        <div className="bg-gray-50 p-3 rounded-xl mb-6">
+                            <button onClick={testAudio} className={`text-sm font-medium flex items-center gap-2 w-full justify-center py-2 rounded-lg transition ${status.includes('Success') ? 'bg-green-100 text-green-700' : 'text-ios-blue hover:bg-white shadow-sm'}`}>
+                                <Icon name="volume-2" size={16} /> {status}
+                            </button>
+                        </div>
+
                         <div className="flex gap-3">
                             <button onClick={onClose} className="flex-1 py-2 text-gray-600 font-medium">Cancel</button>
                             <button onClick={() => { localStorage.setItem('gemini_api_key', key); onClose(); }} className="flex-1 py-2 bg-ios-blue text-white rounded-xl font-semibold">Save</button>
@@ -250,6 +261,27 @@
                         <div className="p-4 border-b flex items-center gap-2"><Icon name={type === 'summary' ? 'sparkles' : 'mic'} className="text-ios-blue" /><h3 className="font-bold text-lg">{type === 'summary' ? 'Chapter Summary' : 'AI Narrator'}</h3></div>
                         <div className="p-6 overflow-y-auto">{content ? <p className="leading-relaxed text-gray-800 whitespace-pre-wrap">{content}</p> : <div className="flex flex-col items-center justify-center py-8"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-ios-blue mb-4"></div><p className="text-gray-500 animate-pulse">Consulting the AI...</p></div>}</div>
                         <div className="p-4 border-t bg-gray-50 rounded-b-2xl"><button onClick={onClose} className="w-full py-3 bg-white border border-gray-200 rounded-xl font-semibold text-gray-700 shadow-sm">Close</button></div>
+                    </div>
+                </div>
+            );
+        };
+
+        const SplitOptions = ({ file, onSplitByTime, onSplitSilence, onCancel }) => {
+            const [mins, setMins] = useState(5);
+            return (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in">
+                    <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-2xl">
+                        <h3 className="text-xl font-bold mb-4">Split Track</h3>
+                        <p className="text-sm text-gray-500 mb-4">Split large audio files into smaller parts for easier navigation.</p>
+                        
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Split every (minutes)</label>
+                        <input type="number" min="1" value={mins} onChange={e => setMins(e.target.value)} className="w-full p-3 border rounded-xl bg-gray-50 mb-6" />
+                        
+                        <div className="flex flex-col gap-2">
+                            <button onClick={() => onSplitByTime(Number(mins))} className="w-full py-3 bg-ios-blue text-white rounded-xl font-semibold hover:bg-blue-600 transition">Split by Time</button>
+                            <button onClick={onSplitSilence} className="w-full py-3 bg-gray-100 text-gray-800 rounded-xl font-semibold hover:bg-gray-200 transition">Split by Silence (Beta)</button>
+                            <button onClick={onCancel} className="w-full py-2 text-gray-500 font-medium mt-2">Cancel</button>
+                        </div>
                     </div>
                 </div>
             );
@@ -272,19 +304,17 @@
             const [isEditingTOC, setIsEditingTOC] = useState(false);
             
             // Audio State
-            const audioPlayerRef = useRef(new Audio());
+            const audioCtx = useRef(null);
+            const audioSource = useRef(null);
             const ttsQueue = useRef([]);
             const ttsIndex = useRef(0);
 
             const fontOptions = [
                 { label: 'System UI', value: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' },
-                { label: 'Helvetica Neue', value: '"Helvetica Neue", Helvetica, Arial, sans-serif' },
-                { label: 'Verdana', value: 'Verdana, Geneva, sans-serif' },
-                { label: 'Lato', value: 'Lato, sans-serif' },
-                { label: 'Charter', value: 'Charter, "Bitstream Charter", serif' },
                 { label: 'Georgia', value: 'Georgia, serif' },
-                { label: 'Iowan Old Style', value: '"Iowan Old Style", serif' },
                 { label: 'Times New Roman', value: '"Times New Roman", Times, serif' },
+                { label: 'Verdana', value: 'Verdana, sans-serif' },
+                { label: 'Helvetica', value: 'Helvetica, Arial, sans-serif' }
             ];
 
             const [settings, setSettings] = useState(() => {
@@ -301,6 +331,15 @@
 
             useEffect(() => { localStorage.setItem('reader_settings', JSON.stringify(settings)); }, [settings]);
             const updateSetting = (key, value) => setSettings(prev => ({ ...prev, [key]: value }));
+
+            // Initialize AudioContext on Mount with iOS Fixes
+            useEffect(() => {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioCtx.current = new AudioContext();
+                return () => {
+                    if (audioCtx.current) audioCtx.current.close();
+                };
+            }, []);
 
             useEffect(() => {
                 const init = async () => {
@@ -368,13 +407,7 @@
                     });
                 };
                 init();
-                return () => { 
-                    if (audioPlayerRef.current) { 
-                        audioPlayerRef.current.pause(); 
-                        audioPlayerRef.current.src = ""; 
-                        audioPlayerRef.current.onended = null;
-                    } 
-                };
+                return () => stopAudio();
             }, [bookId]);
 
             useEffect(() => {
@@ -394,40 +427,47 @@
                 }
             }, [settings, rendition]);
 
-            // --- AI & TEXT HANDLING ---
+            // --- PURE WEB AUDIO ENGINE ---
 
-            const getVisibleText = () => {
-                if (!rendition) return null;
-                try {
-                    const range = rendition.getRange(rendition.currentLocation().start.cfi, rendition.currentLocation().end.cfi);
-                    return range.toString();
-                } catch(e) { return null; }
+            const stopAudio = () => {
+                if (audioSource.current) {
+                    try { audioSource.current.stop(); } catch(e){}
+                    audioSource.current = null;
+                }
+                setIsReadingAloud(false);
+                setAudioStatus("");
+                ttsQueue.current = [];
             };
 
-            const getCurrentChapterText = async () => {
-                if (!rendition || !book) return null;
-                try {
-                    // METHOD 1: Try reading active view first (No Fetch)
-                    const contents = rendition.getContents();
-                    if (contents && contents.length > 0 && contents[0].document) {
-                        return contents[0].document.body.innerText;
-                    }
-
-                    // METHOD 2: Fetch with Timeout
-                    const cfi = rendition.currentLocation().start.cfi;
-                    const item = book.spine.get(cfi);
-                    if (!item) return null;
-                    
-                    // Add timeout promise
-                    const loadPromise = item.load(book.load.bind(book));
-                    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 5000));
-                    
-                    const doc = await Promise.race([loadPromise, timeoutPromise]);
-                    return doc.body ? doc.body.innerText : (doc.documentElement ? doc.documentElement.innerText : "");
-                } catch(e) {
-                    console.warn("Extraction failed", e);
-                    return "";
+            const playRawPCM = (base64, sampleRate) => {
+                if (!audioCtx.current) return;
+                
+                const binaryString = window.atob(base64.replace(/\s/g, ''));
+                const len = binaryString.length;
+                const bytes = new Uint8Array(len);
+                for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+                
+                const int16 = new Int16Array(bytes.buffer);
+                const float32 = new Float32Array(int16.length);
+                for (let i = 0; i < int16.length; i++) {
+                    float32[i] = int16[i] / 32768.0; 
                 }
+
+                const audioBuffer = audioCtx.current.createBuffer(1, float32.length, sampleRate);
+                audioBuffer.getChannelData(0).set(float32);
+
+                const source = audioCtx.current.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(audioCtx.current.destination);
+                
+                audioSource.current = source;
+                
+                source.onended = () => {
+                    ttsIndex.current++;
+                    playNextChunk();
+                };
+                
+                source.start();
             };
 
             const playNextChunk = async () => {
@@ -442,25 +482,11 @@
                 const text = ttsQueue.current[ttsIndex.current];
                 
                 try {
-                    const audioUrl = await callGeminiTTS(text);
+                    const { base64, sampleRate } = await callGeminiTTS(text);
                     setAudioStatus("Playing...");
-                    
-                    audioPlayerRef.current.src = audioUrl;
-                    ttsIndex.current++;
-                    
-                    audioPlayerRef.current.onended = () => {
-                        setAudioStatus("Loading next...");
-                        playNextChunk();
-                    };
-                    
-                    try {
-                        await audioPlayerRef.current.play();
-                    } catch (playErr) {
-                        alert("Playback blocked.");
-                        setIsReadingAloud(false);
-                        setAudioStatus("");
-                    }
+                    playRawPCM(base64, sampleRate);
                 } catch(e) {
+                    console.error("Playback error", e);
                     setAudioStatus("");
                     setIsReadingAloud(false);
                     alert("Audio Error: " + e.message);
@@ -469,22 +495,38 @@
 
             const handleTTS = async () => {
                 if (isReadingAloud) { 
-                    audioPlayerRef.current.pause(); 
-                    setIsReadingAloud(false); 
-                    setAudioStatus(""); 
+                    stopAudio();
                     return; 
                 }
                 
-                const silence = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEAQB8AAEAfAAABAAgAAABkYXRhAgAAAAEA";
-                audioPlayerRef.current.src = silence;
-                try { await audioPlayerRef.current.play(); } catch(e){}
+                // CRITICAL IOS FIX: Wake up audio engine IMMEDIATELY on click
+                if (audioCtx.current) {
+                    if(audioCtx.current.state === 'suspended') await audioCtx.current.resume();
+                    
+                    // Play Silent Buffer explicitly to warm up engine while we wait for network
+                    const buffer = audioCtx.current.createBuffer(1, 1, 22050);
+                    const source = audioCtx.current.createBufferSource();
+                    source.buffer = buffer;
+                    source.connect(audioCtx.current.destination);
+                    source.start(0);
+                }
 
                 setAudioStatus("Analyzing text...");
                 setIsReadingAloud(true);
                 
                 try {
-                    let fullText = await getCurrentChapterText();
-                    
+                    // METHOD 1: Try reading active view first (fastest)
+                    let fullText = "";
+                    const contents = rendition.getContents();
+                    if (contents && contents.length > 0) {
+                        fullText = contents[0].document.body.innerText;
+                    }
+
+                    // METHOD 2: Fallback to extraction
+                    if (!fullText || fullText.trim().length < 5) {
+                        fullText = await getCurrentChapterText();
+                    }
+
                     if (!fullText || fullText.trim().length < 5) {
                         alert("No text found in this chapter.");
                         setAudioStatus("");
@@ -492,6 +534,7 @@
                         return;
                     }
 
+                    // Chunking and Start
                     let startIdx = 0;
                     const visible = getVisibleText();
                     if (visible && visible.length > 20) {
@@ -513,6 +556,28 @@
                     setIsReadingAloud(false); 
                     setAudioStatus("");
                 }
+            };
+
+            // ... Text Helpers ...
+            const getVisibleText = () => {
+                if (!rendition) return null;
+                try {
+                    const range = rendition.getRange(rendition.currentLocation().start.cfi, rendition.currentLocation().end.cfi);
+                    return range.toString();
+                } catch(e) { return null; }
+            };
+
+            const getCurrentChapterText = async () => {
+                if (!rendition || !book) return null;
+                try {
+                    const cfi = rendition.currentLocation().start.cfi;
+                    const item = book.spine.get(cfi);
+                    if (!item) return null;
+                    const loadPromise = item.load(book.load.bind(book));
+                    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 5000));
+                    const doc = await Promise.race([loadPromise, timeoutPromise]);
+                    return doc.body ? doc.body.innerText : (doc.documentElement ? doc.documentElement.innerText : "");
+                } catch(e) { return ""; }
             };
 
             const handleSummary = async () => {
@@ -575,9 +640,8 @@
                         <div className="flex justify-between text-[10px] opacity-50 font-mono"><span>{progress}%</span><span>{book?.locations?.total || '...'} locs</span></div>
                     </div>
 
-                    {audioStatus && <LoadingToast message={audioStatus} onCancel={() => { setAudioStatus(""); setIsReadingAloud(false); audioPlayerRef.current.pause(); }} />}
+                    {audioStatus && <LoadingToast message={audioStatus} onCancel={stopAudio} />}
 
-                    {/* ... (TOC and Appearance Modals remain unchanged for brevity, see previous file if needed) ... */}
                     {showTOC && (
                         <div className="absolute inset-0 top-14 bottom-16 bg-black/50 backdrop-blur-sm z-30" onClick={() => setShowTOC(false)}>
                             <div className={`absolute top-0 right-0 bottom-0 w-72 shadow-2xl overflow-y-auto animate-in slide-in-from-right flex flex-col ${settings.theme === 'dark' ? 'bg-[#2c2c2e]' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
@@ -615,7 +679,7 @@
                                  <div className="mb-4">
                                      <div className="text-xs uppercase font-bold opacity-50 mb-1">Font</div>
                                      <select value={settings.fontFamily} onChange={(e) => updateSetting('fontFamily', e.target.value)} className="w-full p-2 rounded-lg bg-gray-200/20 border-none text-sm">
-                                        {fontOptions.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+                                         {fontOptions.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
                                      </select>
                                  </div>
                                  <div className="mb-4">
@@ -640,7 +704,7 @@
                                      <button onClick={() => updateSetting('dialogueEnhance', !settings.dialogueEnhance)} className={`w-12 h-6 rounded-full transition-colors relative ${settings.dialogueEnhance ? 'bg-ios-blue' : 'bg-gray-300'}`}><div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-transform ${settings.dialogueEnhance ? 'left-[26px]' : 'left-0.5'}`}></div></button>
                                  </div>
                              </div>
-                        </div>
+                         </div>
                     )}
                     
                     {aiModal === 'summary' && <AIModal type="summary" content={summaryText} onClose={() => setAiModal(null)} />}
@@ -874,6 +938,7 @@
             const [dur, setDur] = useState(0); 
             const [showList, setShowList] = useState(false);
             const [showReader, setShowReader] = useState(false);
+            const [isLoadingTrack, setIsLoadingTrack] = useState(false);
             const activeFileId = useRef(null);
 
             useEffect(() => {
@@ -892,6 +957,7 @@
             const loadTrack = async (b, index, autoPlay) => {
                 const track = b.tracks[index];
                 if (!track) return;
+                setIsLoadingTrack(true);
                 const fileId = track.fileId || track.id;
                 const startTime = track.start || 0;
                 
@@ -900,6 +966,8 @@
                     if (f) {
                         const url = URL.createObjectURL(f.data);
                         audioRef.current.src = url;
+                        // iOS Fix: Explicit load needed when swapping src blob
+                        audioRef.current.load();
                         activeFileId.current = fileId;
                         audioRef.current.currentTime = (index === b.currentTrackIndex) ? (b.currentTime || startTime) : startTime;
                     }
@@ -909,7 +977,32 @@
                         audioRef.current.currentTime = startTime;
                     }
                 }
-                if (autoPlay) { try { await audioRef.current.play(); setPlaying(true); } catch(e){} }
+                
+                setIsLoadingTrack(false);
+                if (autoPlay) { 
+                    togglePlay(true);
+                }
+            };
+
+            const togglePlay = async (shouldPlay) => {
+                if (!audioRef.current) return;
+                
+                try {
+                    if (shouldPlay) {
+                        await audioRef.current.play();
+                        setPlaying(true);
+                    } else {
+                        audioRef.current.pause();
+                        setPlaying(false);
+                    }
+                } catch (e) {
+                    console.error("Playback error", e);
+                    setPlaying(false);
+                    // iOS often throws NotAllowedError if the chain wasn't user-initiated
+                    if (e.name === 'NotAllowedError') {
+                        alert("Tap Play to start audio (iOS requires user interaction).");
+                    }
+                }
             };
 
             const updateBookProgress = (t) => {
@@ -922,6 +1015,8 @@
                 const t = b.tracks[idx];
                 b.currentTime = t.start || 0; 
                 setBook(b);
+                // On iOS, changing tracks via async DB fetch might break autoplay permission.
+                // We attempt it, but if it fails, the user will just have to tap Play again.
                 await loadTrack(b, idx, true);
                 patchBook(bookId, { currentTrackIndex: idx, currentTime: b.currentTime });
             };
@@ -1004,8 +1099,16 @@
                             <button onClick={() => audioRef.current.currentTime -= 30} className="text-gray-800 flex flex-col items-center gap-1">
                                 <Icon name="rotate-ccw" size={32} /> <span className="text-[10px] font-bold">30</span>
                             </button>
-                            <button onClick={() => { if(playing) audioRef.current.pause(); else audioRef.current.play(); setPlaying(!playing); }} className="w-20 h-20 bg-slate-900 text-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition">
-                                <Icon name={playing ? "pause" : "play"} size={36} className="ml-1 fill-current" />
+                            <button 
+                                onClick={() => togglePlay(!playing)} 
+                                disabled={isLoadingTrack}
+                                className={`w-20 h-20 bg-slate-900 text-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition ${isLoadingTrack ? 'opacity-50' : ''}`}
+                            >
+                                {isLoadingTrack ? (
+                                    <div className="animate-spin rounded-full h-8 w-8 border-2 border-white/30 border-t-white"></div>
+                                ) : (
+                                    <Icon name={playing ? "pause" : "play"} size={36} className="ml-1 fill-current" />
+                                )}
                             </button>
                             <button onClick={() => audioRef.current.currentTime += 300} className="text-gray-800 flex flex-col items-center gap-1">
                                 <Icon name="rotate-cw" size={32} /> <span className="text-[10px] font-bold">5m</span>
@@ -1073,7 +1176,7 @@
 
                             <div className="grid grid-cols-2 gap-4 pb-20">
                                 {books.map(b => (
-                                    <div key={b.id} onClick={() => { setActiveBookId(b.id); setView('player'); }} className="relative group">
+                                    <div key={b.id} onClick={() => { setActiveBookId(b.id); setView('player'); }} className="relative group cursor-pointer">
                                         <div className="aspect-square bg-white rounded-xl shadow-ios overflow-hidden mb-2 relative">
                                             {covers[b.id] ? <img src={covers[b.id]} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center bg-gray-100 text-gray-300"><Icon name="music" size={40} /></div>}
                                             <button 
