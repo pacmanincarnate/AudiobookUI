@@ -35,9 +35,13 @@
                     },
                     boxShadow: { 'ios': '0 2px 12px rgba(0,0,0,0.06)', 'ios-float': '0 8px 30px rgba(0,0,0,0.12)' },
                     keyframes: {
-                        shimmer: { '0%': { backgroundPosition: '-1000px 0' }, '100%': { backgroundPosition: '1000px 0' } }
+                        shimmer: { '0%': { backgroundPosition: '-1000px 0' }, '100%': { backgroundPosition: '1000px 0' } },
+                        slideUp: { '0%': { transform: 'translateY(100%)', opacity: 0 }, '100%': { transform: 'translateY(0)', opacity: 1 } }
                     },
-                    animation: { shimmer: 'shimmer 2s infinite linear' }
+                    animation: { 
+                        shimmer: 'shimmer 2s infinite linear',
+                        slideUp: 'slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards'
+                    }
                 }
             }
         }
@@ -67,7 +71,7 @@
         // --- GEMINI API CONFIG ---
         const getEffectiveApiKey = () => localStorage.getItem('gemini_api_key') || '';
 
-        // --- AUDIO UTILS (PCM to WAV) ---
+        // --- UTILS ---
         const pcmToWav = (pcmData, sampleRate = 24000) => {
             const buffer = new ArrayBuffer(44 + pcmData.byteLength);
             const view = new DataView(buffer);
@@ -82,16 +86,42 @@
             return buffer;
         };
 
+        const chunkText = (text, maxLength = 3900) => {
+            const chunks = [];
+            let currentText = text;
+            while (currentText.length > 0) {
+                if (currentText.length <= maxLength) {
+                    chunks.push(currentText);
+                    break;
+                }
+                // Intelligent split: try sentence ending, then clause, then space
+                let splitIndex = currentText.lastIndexOf('.', maxLength);
+                if (splitIndex === -1 || splitIndex < maxLength / 2) splitIndex = currentText.lastIndexOf('?', maxLength);
+                if (splitIndex === -1 || splitIndex < maxLength / 2) splitIndex = currentText.lastIndexOf('!', maxLength);
+                if (splitIndex === -1 || splitIndex < maxLength / 2) splitIndex = currentText.lastIndexOf('"', maxLength);
+                if (splitIndex === -1 || splitIndex < maxLength / 2) splitIndex = currentText.lastIndexOf(' ', maxLength);
+                if (splitIndex === -1) splitIndex = maxLength; // Hard cut
+
+                chunks.push(currentText.substring(0, splitIndex + 1));
+                currentText = currentText.substring(splitIndex + 1).trim();
+            }
+            return chunks;
+        };
+
         const callGeminiTTS = async (text) => {
             const key = getEffectiveApiKey();
             if (!key) throw new Error("API Key missing");
             const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${key}`;
             const payload = { contents: [{ parts: [{ text }] }], generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } } } };
             const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-            if (!response.ok) throw new Error("TTS API Error");
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.error?.message || "TTS API Error");
+            }
             const data = await response.json();
             const base64Audio = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-            if (!base64Audio) throw new Error("No audio data");
+            if (!base64Audio) throw new Error("No audio returned");
+            
             const binaryString = window.atob(base64Audio);
             const len = binaryString.length;
             const bytes = new Uint8Array(len);
@@ -164,6 +194,14 @@
 
         // --- COMPONENTS ---
 
+        const LoadingToast = ({ message, onCancel }) => (
+            <div className="fixed bottom-24 left-1/2 transform -translate-x-1/2 z-[80] bg-black/80 backdrop-blur-md text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 animate-[slideUp_0.3s_ease-out] w-auto max-w-[90%]">
+                <div className="animate-spin rounded-full h-4 w-4 border-2 border-white/30 border-t-white"></div>
+                <span className="text-sm font-medium">{message}</span>
+                {onCancel && <button onClick={onCancel} className="ml-2 bg-white/20 hover:bg-white/30 rounded-full p-1"><Icon name="x" size={14} /></button>}
+            </div>
+        );
+
         const SettingsModal = ({ onClose }) => {
             const [key, setKey] = useState(getEffectiveApiKey());
             return (
@@ -206,9 +244,14 @@
             const [aiModal, setAiModal] = useState(null);
             const [summaryText, setSummaryText] = useState(null);
             const [isReadingAloud, setIsReadingAloud] = useState(false);
+            const [loadingAudio, setLoadingAudio] = useState(false);
             const [scanning, setScanning] = useState(false);
             const [isEditingTOC, setIsEditingTOC] = useState(false);
             const audioPlayerRef = useRef(new Audio());
+            
+            // TTS Queue Refs
+            const ttsQueue = useRef([]);
+            const ttsIndex = useRef(0);
 
             const fontOptions = [
                 { label: 'System UI', value: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' },
@@ -252,7 +295,6 @@
                     rend.hooks.content.register((contents) => {
                         const doc = contents.document;
                         const style = doc.createElement('style');
-                        // Use currentColor to ensure shadow matches text color exactly
                         style.textContent = `.dialogue-text { display: inline; color: inherit; }`; 
                         doc.head.appendChild(style);
 
@@ -277,7 +319,6 @@
                                 const span = doc.createElement('span');
                                 span.className = 'dialogue-text';
                                 span.textContent = match[0];
-                                // Use CSS Variable for instant switching
                                 span.style.textShadow = 'var(--dialogue-shadow, none)';
                                 fragment.appendChild(span);
                                 lastIndex = regex.lastIndex;
@@ -309,7 +350,13 @@
                     });
                 };
                 init();
-                return () => { if (audioPlayerRef.current) { audioPlayerRef.current.pause(); audioPlayerRef.current.src = ""; } };
+                return () => { 
+                    if (audioPlayerRef.current) { 
+                        audioPlayerRef.current.pause(); 
+                        audioPlayerRef.current.src = ""; 
+                        audioPlayerRef.current.onended = null;
+                    } 
+                };
             }, [bookId]);
 
             // Appearance Effect
@@ -318,10 +365,7 @@
                     rendition.themes.select(settings.theme);
                     rendition.themes.fontSize(settings.fontSize + '%');
                     rendition.themes.font(settings.fontFamily);
-                    
-                    // Shadow logic: gentle glow centered
                     const shadowStyle = settings.dialogueEnhance ? '0 0 2px currentColor' : 'none';
-                    
                     rendition.themes.register('custom-styles', { 
                         'body': { 
                             'color': `${settings.textColor} !important`,
@@ -333,7 +377,7 @@
                 }
             }, [settings, rendition]);
 
-            // ... TOC & AI Functions (Unchanged) ...
+            // ... TOC & AI Functions ...
             const scanChapters = async () => {
                 if (!book) return;
                 setScanning(true);
@@ -416,19 +460,96 @@
                 } catch (e) { setSummaryText("Error: " + e.message); }
             };
 
-            const handleTTS = async () => {
-                if (isReadingAloud) { audioPlayerRef.current.pause(); setIsReadingAloud(false); return; }
+            const playNextChunk = async () => {
+                if (!isReadingAloud) return; // Stopped
+                if (ttsIndex.current >= ttsQueue.current.length) {
+                    setIsReadingAloud(false);
+                    return;
+                }
+
+                setLoadingAudio(true);
+                const text = ttsQueue.current[ttsIndex.current];
+                
                 try {
-                    let textToRead = getVisibleText();
-                    if (!textToRead || textToRead.trim().length < 5) {
-                        const fullText = await getCurrentChapterText();
-                        textToRead = fullText ? fullText.substring(0, 2500) : ""; 
+                    const audioUrl = await callGeminiTTS(text);
+                    audioPlayerRef.current.src = audioUrl;
+                    
+                    // Increment for next time
+                    ttsIndex.current++;
+                    
+                    // Trigger next chunk when this one ends
+                    audioPlayerRef.current.onended = () => {
+                        // Small delay or direct? Direct is better for continuous
+                        playNextChunk();
+                    };
+                    
+                    await audioPlayerRef.current.play();
+                    setLoadingAudio(false);
+                } catch(e) {
+                    console.error("Playback error", e);
+                    setLoadingAudio(false);
+                    setIsReadingAloud(false);
+                    alert("Audio playback stopped: " + e.message);
+                }
+            };
+
+            const handleTTS = async () => {
+                if (isReadingAloud) { 
+                    audioPlayerRef.current.pause(); 
+                    setIsReadingAloud(false); 
+                    setLoadingAudio(false); 
+                    return; 
+                }
+                
+                setLoadingAudio(true);
+                
+                try {
+                    // 1. Get full text of chapter
+                    const chapterText = await getCurrentChapterText();
+                    if (!chapterText || chapterText.length < 10) {
+                        alert("No text available to read.");
+                        setLoadingAudio(false);
+                        return;
                     }
-                    if (!textToRead || textToRead.length < 5) { alert("Not enough text found."); return; }
+
+                    // 2. Try to find where we are (visible text)
+                    const visibleText = getVisibleText();
+                    let startIdx = 0;
+                    if (visibleText && visibleText.length > 20) {
+                        // Sanitize for matching (remove newlines etc)
+                        const searchStr = visibleText.substring(0, 50).replace(/\s+/g, ' ').trim();
+                        // Find this in chapter text (normalized)
+                        // Simple search first
+                        startIdx = chapterText.indexOf(searchStr);
+                        if (startIdx === -1) {
+                            // Fallback: Just read from start of chapter if match fails
+                            startIdx = 0;
+                        }
+                    }
+
+                    const remainingText = chapterText.substring(startIdx);
+                    
+                    // 3. Chunk it
+                    const chunks = chunkText(remainingText);
+                    if (chunks.length === 0) {
+                        alert("Text processing failed.");
+                        setLoadingAudio(false);
+                        return;
+                    }
+
+                    // 4. Setup Queue
+                    ttsQueue.current = chunks;
+                    ttsIndex.current = 0;
                     setIsReadingAloud(true);
-                    const audioUrl = await callGeminiTTS(textToRead);
-                    audioPlayerRef.current.src = audioUrl; audioPlayerRef.current.play(); audioPlayerRef.current.onended = () => setIsReadingAloud(false);
-                } catch (e) { alert("TTS Error: " + e.message); setIsReadingAloud(false); }
+                    
+                    // 5. Start
+                    playNextChunk();
+
+                } catch (e) { 
+                    alert("TTS Error: " + e.message); 
+                    setIsReadingAloud(false); 
+                    setLoadingAudio(false);
+                }
             };
 
             const handleSlider = (e) => {
@@ -442,7 +563,7 @@
                     <div className={`h-14 border-b flex items-center justify-between px-4 safe-top z-20 ${settings.theme === 'dark' ? 'border-gray-800' : 'border-gray-200 bg-white/50 backdrop-blur'}`}>
                         <button onClick={onClose} className="text-ios-blue font-semibold">Done</button>
                         <div className="flex gap-2">
-                             <button onClick={handleTTS} className={`p-2 rounded-full ${isReadingAloud ? 'bg-ios-blue text-white animate-pulse' : 'hover:bg-black/5'}`} title="AI Narrator"><Icon name="headphones" size={20} /></button>
+                             <button onClick={handleTTS} className={`p-2 rounded-full ${isReadingAloud && !loadingAudio ? 'bg-ios-blue text-white animate-pulse' : 'hover:bg-black/5'}`} title="AI Narrator"><Icon name="headphones" size={20} /></button>
                              <button onClick={handleSummary} className="p-2 rounded-full hover:bg-black/5" title="Summarize"><Icon name="sparkles" size={20} /></button>
                             <div className="w-px h-6 bg-gray-300 mx-1"></div>
                             <button onClick={() => { setShowAppearance(!showAppearance); setShowTOC(false); }} className="p-2 rounded-full hover:bg-black/5"><Icon name="type" size={20} /></button>
@@ -461,6 +582,8 @@
                         <input type="range" min="0" max="100" step="1" value={progress} onChange={handleSlider} className="w-full h-1 bg-gray-300 rounded-full mb-1" />
                         <div className="flex justify-between text-[10px] opacity-50 font-mono"><span>{progress}%</span><span>{book?.locations?.total || '...'} locs</span></div>
                     </div>
+
+                    {loadingAudio && <LoadingToast message={ttsIndex.current > 0 ? "Loading next part..." : "Generating Audio..."} onCancel={() => { setLoadingAudio(false); setIsReadingAloud(false); audioPlayerRef.current.pause(); }} />}
 
                     {showTOC && (
                         <div className="absolute inset-0 top-14 bottom-16 bg-black/50 backdrop-blur-sm z-30" onClick={() => setShowTOC(false)}>
@@ -496,31 +619,20 @@
                                          <button key={t} onClick={() => updateSetting('theme', t)} className={`flex-1 py-2 rounded-md capitalize text-sm font-medium ${settings.theme === t ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-900'}`} style={settings.theme === t && t === 'dark' ? {background: '#555', color: 'white'} : {}}>{t}</button>
                                      ))}
                                  </div>
-                                 
-                                 {/* Font Dropdown */}
                                  <div className="mb-4">
                                      <div className="text-xs uppercase font-bold opacity-50 mb-1">Font</div>
-                                     <select 
-                                        value={settings.fontFamily} 
-                                        onChange={(e) => updateSetting('fontFamily', e.target.value)}
-                                        className="w-full p-2 rounded-lg bg-gray-200/20 border-none text-sm"
-                                     >
+                                     <select value={settings.fontFamily} onChange={(e) => updateSetting('fontFamily', e.target.value)} className="w-full p-2 rounded-lg bg-gray-200/20 border-none text-sm">
                                         {fontOptions.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
                                      </select>
                                  </div>
-
-                                 {/* Line Height */}
                                  <div className="mb-4">
                                      <div className="text-xs uppercase font-bold opacity-50 mb-2">Line Spacing</div>
                                      <div className="flex bg-gray-200/20 rounded-lg p-1">
                                          {[1.2, 1.5, 1.8].map((lh, i) => (
-                                             <button key={lh} onClick={() => updateSetting('lineHeight', lh)} className={`flex-1 py-1.5 rounded text-xs font-medium ${settings.lineHeight === lh ? 'bg-white shadow-sm' : ''}`}>
-                                                 {i === 0 ? 'Tight' : i === 1 ? 'Normal' : 'Wide'}
-                                             </button>
+                                             <button key={lh} onClick={() => updateSetting('lineHeight', lh)} className={`flex-1 py-1.5 rounded text-xs font-medium ${settings.lineHeight === lh ? 'bg-white shadow-sm' : ''}`}>{i === 0 ? 'Tight' : i === 1 ? 'Normal' : 'Wide'}</button>
                                          ))}
                                      </div>
                                  </div>
-
                                  <div className="flex items-center justify-between gap-4 mb-4">
                                      <button onClick={() => updateSetting('fontSize', Math.max(50, settings.fontSize - 10))} className="p-2 border rounded-lg border-gray-200/20"><Icon name="minus" size={16} /></button>
                                      <span className="text-sm font-mono w-12 text-center">{settings.fontSize}%</span>
@@ -530,15 +642,9 @@
                                      <div className="text-xs uppercase font-bold opacity-50 mb-2">Text Color</div>
                                      <input type="color" value={settings.textColor} onChange={(e) => updateSetting('textColor', e.target.value)} className="w-full h-8 rounded cursor-pointer" />
                                  </div>
-                                 
                                  <div className="border-t border-gray-200/10 pt-3 flex items-center justify-between">
                                      <span className="text-sm font-medium">Enhance Dialogue</span>
-                                     <button 
-                                        onClick={() => updateSetting('dialogueEnhance', !settings.dialogueEnhance)}
-                                        className={`w-12 h-6 rounded-full transition-colors relative ${settings.dialogueEnhance ? 'bg-ios-blue' : 'bg-gray-300'}`}
-                                     >
-                                         <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-transform ${settings.dialogueEnhance ? 'left-[26px]' : 'left-0.5'}`}></div>
-                                     </button>
+                                     <button onClick={() => updateSetting('dialogueEnhance', !settings.dialogueEnhance)} className={`w-12 h-6 rounded-full transition-colors relative ${settings.dialogueEnhance ? 'bg-ios-blue' : 'bg-gray-300'}`}><div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-transform ${settings.dialogueEnhance ? 'left-[26px]' : 'left-0.5'}`}></div></button>
                                  </div>
                              </div>
                         </div>
