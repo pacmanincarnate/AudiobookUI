@@ -47,7 +47,6 @@
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .safe-top { padding-top: max(env(safe-area-inset-top), 20px); }
         .safe-bottom { padding-bottom: max(env(safe-area-inset-bottom), 20px); }
-        /* Range Input */
         input[type=range] { -webkit-appearance: none; background: transparent; }
         input[type=range]::-webkit-slider-thumb {
             -webkit-appearance: none; height: 24px; width: 24px; border-radius: 50%;
@@ -56,6 +55,7 @@
         input[type=range]::-webkit-slider-runnable-track {
             width: 100%; height: 4px; background: rgba(0,0,0,0.1); border-radius: 2px;
         }
+        select { -webkit-appearance: none; appearance: none; }
     </style>
 </head>
 <body class="bg-ios-bg text-slate-900 h-screen w-screen overflow-hidden select-none">
@@ -210,33 +210,31 @@
             const [isEditingTOC, setIsEditingTOC] = useState(false);
             const audioPlayerRef = useRef(new Audio());
 
-            // Persistent Settings
+            const fontOptions = [
+                { label: 'System UI', value: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' },
+                { label: 'Helvetica Neue', value: '"Helvetica Neue", Helvetica, Arial, sans-serif' },
+                { label: 'Verdana', value: 'Verdana, Geneva, sans-serif' },
+                { label: 'Lato', value: 'Lato, sans-serif' },
+                { label: 'Charter', value: 'Charter, "Bitstream Charter", serif' },
+                { label: 'Georgia', value: 'Georgia, serif' },
+                { label: 'Iowan Old Style', value: '"Iowan Old Style", serif' },
+                { label: 'Times New Roman', value: '"Times New Roman", Times, serif' },
+            ];
+
             const [settings, setSettings] = useState(() => {
                 const saved = localStorage.getItem('reader_settings');
                 return saved ? JSON.parse(saved) : {
                     theme: 'light',
                     fontSize: 100,
-                    fontFamily: 'sans-serif',
-                    highlightColor: 'none',
+                    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                    lineHeight: 1.5,
+                    dialogueEnhance: false,
                     textColor: '#000000'
                 };
             });
 
             useEffect(() => { localStorage.setItem('reader_settings', JSON.stringify(settings)); }, [settings]);
             const updateSetting = (key, value) => setSettings(prev => ({ ...prev, [key]: value }));
-
-            const themes = {
-                light: { body: { background: '#fff' } }, 
-                sepia: { body: { background: '#f6f1d1' } },
-                dark: { body: { background: '#1c1c1e' } }
-            };
-
-            const getHighlightColorCode = (colorName, currentTheme) => {
-                if (colorName === 'none') return 'inherit';
-                const isDark = currentTheme === 'dark';
-                const colors = { blue: isDark ? '#60a5fa' : '#2563eb', red: isDark ? '#f87171' : '#dc2626', purple: isDark ? '#c084fc' : '#9333ea' };
-                return colors[colorName] || 'inherit';
-            };
 
             useEffect(() => {
                 const init = async () => {
@@ -254,32 +252,38 @@
                     rend.hooks.content.register((contents) => {
                         const doc = contents.document;
                         const style = doc.createElement('style');
-                        style.textContent = `.dialogue-text { display: inline; }`;
+                        // Use currentColor to ensure shadow matches text color exactly
+                        style.textContent = `.dialogue-text { display: inline; color: inherit; }`; 
                         doc.head.appendChild(style);
+
                         const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, null, false);
                         const nodes = [];
                         while(walker.nextNode()) nodes.push(walker.currentNode);
+
+                        const regex = /([“"”][^"”]*[”"“])|("[^"]*")/g; 
+
                         nodes.forEach(node => {
-                            if (!node.nodeValue) return;
-                            const regex = /([“"”][^"”]*[”"“])/g;
-                            if (regex.test(node.nodeValue)) {
-                                const fragment = doc.createDocumentFragment();
-                                let lastIndex = 0;
-                                node.nodeValue.replace(regex, (match, offset) => {
-                                    const before = node.nodeValue.substring(lastIndex, arguments[arguments.length - 2]); 
-                                    if(before) fragment.appendChild(document.createTextNode(before));
-                                    const span = doc.createElement('span');
-                                    span.className = 'dialogue-text';
-                                    span.textContent = match;
-                                    span.dataset.type = 'dialogue';
-                                    fragment.appendChild(span);
-                                    lastIndex = arguments[arguments.length - 2] + match.length;
-                                    return match;
-                                });
-                                const after = node.nodeValue.substring(lastIndex);
-                                if(after) fragment.appendChild(document.createTextNode(after));
-                                node.parentNode.replaceChild(fragment, node);
+                            if (!node.nodeValue || node.parentElement.tagName === 'SCRIPT' || node.parentElement.tagName === 'STYLE') return;
+                            const text = node.nodeValue;
+                            if (!regex.test(text)) return;
+                            
+                            regex.lastIndex = 0;
+                            const fragment = doc.createDocumentFragment();
+                            let lastIndex = 0;
+                            let match;
+
+                            while ((match = regex.exec(text)) !== null) {
+                                if (match.index > lastIndex) fragment.appendChild(document.createTextNode(text.substring(lastIndex, match.index)));
+                                const span = doc.createElement('span');
+                                span.className = 'dialogue-text';
+                                span.textContent = match[0];
+                                // Use CSS Variable for instant switching
+                                span.style.textShadow = 'var(--dialogue-shadow, none)';
+                                fragment.appendChild(span);
+                                lastIndex = regex.lastIndex;
                             }
+                            if (lastIndex < text.length) fragment.appendChild(document.createTextNode(text.substring(lastIndex)));
+                            node.parentNode.replaceChild(fragment, node);
                         });
                     });
 
@@ -295,9 +299,9 @@
                         setToc(navigation.toc);
                     }
 
-                    rend.themes.register('light', themes.light);
-                    rend.themes.register('sepia', themes.sepia);
-                    rend.themes.register('dark', themes.dark);
+                    rend.themes.register('light', { body: { background: '#fff' } });
+                    rend.themes.register('sepia', { body: { background: '#f6f1d1' } });
+                    rend.themes.register('dark', { body: { background: '#1c1c1e' } });
                     
                     rend.on('relocated', (location) => {
                         setProgress(Math.floor(location.start.percentage * 100));
@@ -308,18 +312,28 @@
                 return () => { if (audioPlayerRef.current) { audioPlayerRef.current.pause(); audioPlayerRef.current.src = ""; } };
             }, [bookId]);
 
+            // Appearance Effect
             useEffect(() => {
                 if(rendition) {
                     rendition.themes.select(settings.theme);
                     rendition.themes.fontSize(settings.fontSize + '%');
                     rendition.themes.font(settings.fontFamily);
-                    const dialogueColor = getHighlightColorCode(settings.highlightColor, settings.theme);
-                    rendition.themes.register('custom', { 'body': { 'color': `${settings.textColor} !important` }, '.dialogue-text': { 'color': `${dialogueColor} !important` } });
-                    rendition.themes.select('custom');
+                    
+                    // Shadow logic: gentle glow centered
+                    const shadowStyle = settings.dialogueEnhance ? '0 0 2px currentColor' : 'none';
+                    
+                    rendition.themes.register('custom-styles', { 
+                        'body': { 
+                            'color': `${settings.textColor} !important`,
+                            'line-height': `${settings.lineHeight} !important`,
+                            '--dialogue-shadow': shadowStyle
+                        }
+                    });
+                    rendition.themes.select('custom-styles');
                 }
             }, [settings, rendition]);
 
-            // TOC Management
+            // ... TOC & AI Functions (Unchanged) ...
             const scanChapters = async () => {
                 if (!book) return;
                 setScanning(true);
@@ -364,21 +378,39 @@
                 setIsEditingTOC(false);
             };
 
-            // AI Features
+            const getVisibleText = () => {
+                if (!rendition) return null;
+                const visible = rendition.currentLocation();
+                if (!visible || !visible.start || !visible.end) return null;
+                try {
+                    const range = rendition.getRange(visible.start.cfi, visible.end.cfi);
+                    return range.toString();
+                } catch(e) {
+                    console.log("Range Error", e);
+                    return null;
+                }
+            };
+
             const getCurrentChapterText = async () => {
                 if (!rendition || !book) return null;
                 const cfi = rendition.currentLocation().start.cfi;
                 const item = book.spine.get(cfi);
                 if (!item) return null;
-                const doc = await item.load(book.load.bind(book));
-                return doc.body.innerText;
+                try {
+                    const doc = await item.load(book.load.bind(book));
+                    const body = doc.body || doc.querySelector('body') || doc.documentElement;
+                    return body ? (body.innerText || body.textContent || "") : "";
+                } catch (e) {
+                    console.warn("Text extraction error", e);
+                    return "";
+                }
             };
 
             const handleSummary = async () => {
                 setAiModal('summary'); setSummaryText(null);
                 try {
                     const text = await getCurrentChapterText();
-                    if (!text) throw new Error("Could not extract text");
+                    if (!text || text.length < 50) throw new Error("Could not extract enough text.");
                     const summary = await callGeminiSummary(text);
                     setSummaryText(summary);
                 } catch (e) { setSummaryText("Error: " + e.message); }
@@ -387,11 +419,14 @@
             const handleTTS = async () => {
                 if (isReadingAloud) { audioPlayerRef.current.pause(); setIsReadingAloud(false); return; }
                 try {
-                    const range = rendition.getRange(rendition.currentLocation().start.cfi);
-                    const visibleText = range.toString();
-                    if (!visibleText || visibleText.length < 10) { alert("Not enough text."); return; }
+                    let textToRead = getVisibleText();
+                    if (!textToRead || textToRead.trim().length < 5) {
+                        const fullText = await getCurrentChapterText();
+                        textToRead = fullText ? fullText.substring(0, 2500) : ""; 
+                    }
+                    if (!textToRead || textToRead.length < 5) { alert("Not enough text found."); return; }
                     setIsReadingAloud(true);
-                    const audioUrl = await callGeminiTTS(visibleText);
+                    const audioUrl = await callGeminiTTS(textToRead);
                     audioPlayerRef.current.src = audioUrl; audioPlayerRef.current.play(); audioPlayerRef.current.onended = () => setIsReadingAloud(false);
                 } catch (e) { alert("TTS Error: " + e.message); setIsReadingAloud(false); }
             };
@@ -455,16 +490,37 @@
 
                     {showAppearance && (
                         <div className="absolute inset-0 z-30" onClick={() => setShowAppearance(false)}>
-                             <div className={`absolute top-16 right-4 w-72 rounded-xl shadow-2xl p-4 animate-in zoom-in-95 ${settings.theme === 'dark' ? 'bg-[#2c2c2e] border border-gray-700' : 'bg-white border border-gray-200'}`} onClick={e => e.stopPropagation()}>
+                             <div className={`absolute top-16 right-4 w-72 rounded-xl shadow-2xl p-4 animate-in zoom-in-95 overflow-y-auto max-h-[80vh] ${settings.theme === 'dark' ? 'bg-[#2c2c2e] border border-gray-700' : 'bg-white border border-gray-200'}`} onClick={e => e.stopPropagation()}>
                                  <div className="flex justify-between bg-gray-200/20 rounded-lg p-1 mb-4">
                                      {['light', 'sepia', 'dark'].map(t => (
                                          <button key={t} onClick={() => updateSetting('theme', t)} className={`flex-1 py-2 rounded-md capitalize text-sm font-medium ${settings.theme === t ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-900'}`} style={settings.theme === t && t === 'dark' ? {background: '#555', color: 'white'} : {}}>{t}</button>
                                      ))}
                                  </div>
-                                 <div className="flex justify-between gap-2 mb-4">
-                                     <button onClick={() => updateSetting('fontFamily', 'sans-serif')} className={`flex-1 py-2 border rounded-lg text-sm ${settings.fontFamily === 'sans-serif' ? 'border-ios-blue text-ios-blue bg-blue-50/10' : 'border-gray-200/20'}`}>Sans</button>
-                                     <button onClick={() => updateSetting('fontFamily', 'serif')} className={`flex-1 py-2 border rounded-lg text-sm font-serif ${settings.fontFamily === 'serif' ? 'border-ios-blue text-ios-blue bg-blue-50/10' : 'border-gray-200/20'}`}>Serif</button>
+                                 
+                                 {/* Font Dropdown */}
+                                 <div className="mb-4">
+                                     <div className="text-xs uppercase font-bold opacity-50 mb-1">Font</div>
+                                     <select 
+                                        value={settings.fontFamily} 
+                                        onChange={(e) => updateSetting('fontFamily', e.target.value)}
+                                        className="w-full p-2 rounded-lg bg-gray-200/20 border-none text-sm"
+                                     >
+                                        {fontOptions.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+                                     </select>
                                  </div>
+
+                                 {/* Line Height */}
+                                 <div className="mb-4">
+                                     <div className="text-xs uppercase font-bold opacity-50 mb-2">Line Spacing</div>
+                                     <div className="flex bg-gray-200/20 rounded-lg p-1">
+                                         {[1.2, 1.5, 1.8].map((lh, i) => (
+                                             <button key={lh} onClick={() => updateSetting('lineHeight', lh)} className={`flex-1 py-1.5 rounded text-xs font-medium ${settings.lineHeight === lh ? 'bg-white shadow-sm' : ''}`}>
+                                                 {i === 0 ? 'Tight' : i === 1 ? 'Normal' : 'Wide'}
+                                             </button>
+                                         ))}
+                                     </div>
+                                 </div>
+
                                  <div className="flex items-center justify-between gap-4 mb-4">
                                      <button onClick={() => updateSetting('fontSize', Math.max(50, settings.fontSize - 10))} className="p-2 border rounded-lg border-gray-200/20"><Icon name="minus" size={16} /></button>
                                      <span className="text-sm font-mono w-12 text-center">{settings.fontSize}%</span>
@@ -474,16 +530,15 @@
                                      <div className="text-xs uppercase font-bold opacity-50 mb-2">Text Color</div>
                                      <input type="color" value={settings.textColor} onChange={(e) => updateSetting('textColor', e.target.value)} className="w-full h-8 rounded cursor-pointer" />
                                  </div>
-                                 <div className="border-t border-gray-200/10 pt-3">
-                                     <div className="text-xs uppercase font-bold opacity-50 mb-2">Dialogue Color</div>
-                                     <div className="flex gap-2">
-                                         {['none', 'blue', 'red', 'purple'].map(c => (
-                                             <button key={c} onClick={() => updateSetting('highlightColor', c)} className={`flex-1 h-8 rounded border flex items-center justify-center ${settings.highlightColor === c ? 'border-black/50 shadow-inner' : 'border-transparent'}`} style={{background: c === 'none' ? 'transparent' : getHighlightColorCode(c, 'light'), border: c === 'none' ? '1px solid #ccc' : ''}}>
-                                                {c === 'none' && <Icon name="slash" size={12} className="opacity-50" />}
-                                                {settings.highlightColor === c && c !== 'none' && <div className="w-2 h-2 bg-white rounded-full"></div>}
-                                             </button>
-                                         ))}
-                                     </div>
+                                 
+                                 <div className="border-t border-gray-200/10 pt-3 flex items-center justify-between">
+                                     <span className="text-sm font-medium">Enhance Dialogue</span>
+                                     <button 
+                                        onClick={() => updateSetting('dialogueEnhance', !settings.dialogueEnhance)}
+                                        className={`w-12 h-6 rounded-full transition-colors relative ${settings.dialogueEnhance ? 'bg-ios-blue' : 'bg-gray-300'}`}
+                                     >
+                                         <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-transform ${settings.dialogueEnhance ? 'left-[26px]' : 'left-0.5'}`}></div>
+                                     </button>
                                  </div>
                              </div>
                         </div>
