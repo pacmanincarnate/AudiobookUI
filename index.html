@@ -33,7 +33,11 @@
                     colors: {
                         ios: { bg: '#F2F2F7', card: '#FFFFFF', blue: '#007AFF', red: '#FF3B30', gray: '#8E8E93', border: '#C6C6C8' }
                     },
-                    boxShadow: { 'ios': '0 2px 12px rgba(0,0,0,0.06)', 'ios-float': '0 8px 30px rgba(0,0,0,0.12)' }
+                    boxShadow: { 'ios': '0 2px 12px rgba(0,0,0,0.06)', 'ios-float': '0 8px 30px rgba(0,0,0,0.12)' },
+                    keyframes: {
+                        shimmer: { '0%': { backgroundPosition: '-1000px 0' }, '100%': { backgroundPosition: '1000px 0' } }
+                    },
+                    animation: { shimmer: 'shimmer 2s infinite linear' }
                 }
             }
         }
@@ -60,10 +64,56 @@
     <script type="text/babel">
         const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
+        // --- GEMINI API CONFIG ---
+        const getEffectiveApiKey = () => localStorage.getItem('gemini_api_key') || '';
+
+        // --- AUDIO UTILS (PCM to WAV) ---
+        const pcmToWav = (pcmData, sampleRate = 24000) => {
+            const buffer = new ArrayBuffer(44 + pcmData.byteLength);
+            const view = new DataView(buffer);
+            const writeString = (offset, string) => { for (let i = 0; i < string.length; i++) view.setUint8(offset + i, string.charCodeAt(i)); };
+            writeString(0, 'RIFF'); view.setUint32(4, 36 + pcmData.byteLength, true); writeString(8, 'WAVE'); writeString(12, 'fmt ');
+            view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true); writeString(36, 'data');
+            view.setUint32(40, pcmData.byteLength, true);
+            const pcmView = new Uint8Array(pcmData);
+            const wavView = new Uint8Array(buffer, 44);
+            wavView.set(pcmView);
+            return buffer;
+        };
+
+        const callGeminiTTS = async (text) => {
+            const key = getEffectiveApiKey();
+            if (!key) throw new Error("API Key missing");
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${key}`;
+            const payload = { contents: [{ parts: [{ text }] }], generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } } } };
+            const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+            if (!response.ok) throw new Error("TTS API Error");
+            const data = await response.json();
+            const base64Audio = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+            if (!base64Audio) throw new Error("No audio data");
+            const binaryString = window.atob(base64Audio);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+            const wavBuffer = pcmToWav(bytes.buffer);
+            return URL.createObjectURL(new Blob([wavBuffer], { type: 'audio/wav' }));
+        };
+
+        const callGeminiSummary = async (text) => {
+            const key = getEffectiveApiKey();
+            if (!key) throw new Error("API Key missing");
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${key}`;
+            const payload = { contents: [{ parts: [{ text: "Summarize this chapter concisely:\n\n" + text.substring(0, 10000) }] }] };
+            const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+            if (!response.ok) throw new Error("Summary API Error");
+            const data = await response.json();
+            return data.candidates?.[0]?.content?.parts?.[0]?.text || "No summary generated.";
+        };
+
         // --- DB LAYER ---
         const DB_NAME = 'AudiobookManagerDB';
         const DB_VERSION = 2; 
-
         const openDB = () => new Promise((resolve, reject) => {
             const req = indexedDB.open(DB_NAME, DB_VERSION);
             req.onerror = () => reject('DB Error');
@@ -74,7 +124,6 @@
             };
             req.onsuccess = (e) => resolve(e.target.result);
         });
-
         const dbOp = async (mode, store, cb) => {
             const db = await openDB();
             return new Promise((resolve, reject) => {
@@ -84,29 +133,15 @@
                 req.onerror = () => reject(req.error);
             });
         };
-
-        // Atomic Patch Function to prevent Audio/Reader overwrite conflicts
         const patchBook = async (bookId, updates) => {
             const db = await openDB();
             const tx = db.transaction('books', 'readwrite');
             const store = tx.objectStore('books');
-            
-            // Get current state
-            const book = await new Promise((resolve, reject) => {
-                const req = store.get(bookId);
-                req.onsuccess = () => resolve(req.result);
-                req.onerror = () => reject(req.error);
-            });
-
+            const book = await new Promise((resolve, reject) => { const req = store.get(bookId); req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error); });
             if (!book) return;
-
-            // Merge updates
-            const updatedBook = { ...book, ...updates };
-            store.put(updatedBook);
-            
+            store.put({ ...book, ...updates });
             return new Promise(resolve => tx.oncomplete = resolve);
         };
-
         const saveFiles = async (files) => {
             const db = await openDB();
             const tx = db.transaction('files', 'readwrite');
@@ -129,52 +164,36 @@
 
         // --- COMPONENTS ---
 
-        // 1. SPLIT OPTIONS MODAL
-        const SplitOptions = ({ file, onSplitByTime, onSplitSilence, onCancel }) => {
-            const isLarge = file.size > 60 * 1024 * 1024; // 60MB Threshold
-
+        const SettingsModal = ({ onClose }) => {
+            const [key, setKey] = useState(getEffectiveApiKey());
             return (
-                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in">
-                    <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl scale-100 animate-in zoom-in-95 duration-200">
-                        <div className="p-6 pb-4">
-                            <h3 className="text-xl font-bold mb-2">Split Audio</h3>
-                            <p className="text-gray-500 text-sm mb-4">
-                                "{file.name}"
-                                {isLarge && <span className="block mt-2 text-amber-600 font-medium bg-amber-50 p-2 rounded-lg">⚠️ File is large ({(file.size/1024/1024).toFixed(0)}MB). Silence detection may crash browser. Recommended: Split by Time.</span>}
-                            </p>
-                            <div className="space-y-3">
-                                <button onClick={() => onSplitByTime(30)} className="w-full bg-gray-50 hover:bg-gray-100 p-3 rounded-xl flex items-center justify-between group">
-                                    <div className="flex flex-col items-start">
-                                        <span className="font-semibold text-gray-800">Every 30 Minutes</span>
-                                        <span className="text-xs text-gray-400">Instant • Zero Memory</span>
-                                    </div>
-                                    <Icon name="clock" className="text-gray-400 group-hover:text-blue-500" />
-                                </button>
-                                <button onClick={() => onSplitByTime(60)} className="w-full bg-gray-50 hover:bg-gray-100 p-3 rounded-xl flex items-center justify-between group">
-                                    <div className="flex flex-col items-start">
-                                        <span className="font-semibold text-gray-800">Every 1 Hour</span>
-                                        <span className="text-xs text-gray-400">Instant • Zero Memory</span>
-                                    </div>
-                                    <Icon name="clock" className="text-gray-400 group-hover:text-blue-500" />
-                                </button>
-                                <button onClick={onSplitSilence} className={`w-full p-3 rounded-xl flex items-center justify-between group ${isLarge ? 'bg-red-50 hover:bg-red-100' : 'bg-purple-50 hover:bg-purple-100'}`}>
-                                    <div className="flex flex-col items-start">
-                                        <span className={`font-semibold ${isLarge ? 'text-red-700' : 'text-purple-700'}`}>Silence Detection</span>
-                                        <span className={`text-xs ${isLarge ? 'text-red-500' : 'text-purple-500'}`}>{isLarge ? 'High Crash Risk' : 'Scans for gaps > 2s'}</span>
-                                    </div>
-                                    <Icon name="wand-2" className={`${isLarge ? 'text-red-400' : 'text-purple-400'}`} />
-                                </button>
-                            </div>
-                        </div>
-                        <div className="bg-gray-50 p-3 text-center border-t border-gray-100">
-                            <button onClick={onCancel} className="text-ios-blue font-semibold w-full h-full">Cancel</button>
+                <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in">
+                    <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-2xl">
+                        <h3 className="text-xl font-bold mb-4">Settings</h3>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Google Gemini API Key</label>
+                        <input type="password" value={key} onChange={e => setKey(e.target.value)} placeholder="AIzaSy..." className="w-full p-3 border rounded-xl bg-gray-50 mb-4 font-mono text-sm" />
+                        <p className="text-xs text-gray-400 mb-6">Required for AI Narrator and Summarization features.</p>
+                        <div className="flex gap-3">
+                            <button onClick={onClose} className="flex-1 py-2 text-gray-600 font-medium">Cancel</button>
+                            <button onClick={() => { localStorage.setItem('gemini_api_key', key); onClose(); }} className="flex-1 py-2 bg-ios-blue text-white rounded-xl font-semibold">Save</button>
                         </div>
                     </div>
                 </div>
             );
         };
 
-        // 2. EPUB READER (With Persistent Location)
+        const AIModal = ({ type, content, onClose }) => {
+            return (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-6 animate-in fade-in">
+                    <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[80vh]">
+                        <div className="p-4 border-b flex items-center gap-2"><Icon name={type === 'summary' ? 'sparkles' : 'mic'} className="text-ios-blue" /><h3 className="font-bold text-lg">{type === 'summary' ? 'Chapter Summary' : 'AI Narrator'}</h3></div>
+                        <div className="p-6 overflow-y-auto">{content ? <p className="leading-relaxed text-gray-800 whitespace-pre-wrap">{content}</p> : <div className="flex flex-col items-center justify-center py-8"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-ios-blue mb-4"></div><p className="text-gray-500 animate-pulse">Consulting the AI...</p></div>}</div>
+                        <div className="p-4 border-t bg-gray-50 rounded-b-2xl"><button onClick={onClose} className="w-full py-3 bg-white border border-gray-200 rounded-xl font-semibold text-gray-700 shadow-sm">Close</button></div>
+                    </div>
+                </div>
+            );
+        };
+
         const EpubReader = ({ bookId, onClose }) => {
             const viewerRef = useRef(null);
             const [book, setBook] = useState(null);
@@ -184,59 +203,62 @@
             const [ready, setReady] = useState(false);
             const [showTOC, setShowTOC] = useState(false);
             const [showAppearance, setShowAppearance] = useState(false);
+            const [aiModal, setAiModal] = useState(null);
+            const [summaryText, setSummaryText] = useState(null);
+            const [isReadingAloud, setIsReadingAloud] = useState(false);
+            const [scanning, setScanning] = useState(false);
+            const [isEditingTOC, setIsEditingTOC] = useState(false);
+            const audioPlayerRef = useRef(new Audio());
 
-            // Appearance State
-            const [theme, setTheme] = useState('light'); // light, sepia, dark
-            const [fontSize, setFontSize] = useState(100);
-            const [fontFamily, setFontFamily] = useState('sans-serif');
-            const [highlightColor, setHighlightColor] = useState('none'); 
+            // Persistent Settings
+            const [settings, setSettings] = useState(() => {
+                const saved = localStorage.getItem('reader_settings');
+                return saved ? JSON.parse(saved) : {
+                    theme: 'light',
+                    fontSize: 100,
+                    fontFamily: 'sans-serif',
+                    highlightColor: 'none',
+                    textColor: '#000000'
+                };
+            });
+
+            useEffect(() => { localStorage.setItem('reader_settings', JSON.stringify(settings)); }, [settings]);
+            const updateSetting = (key, value) => setSettings(prev => ({ ...prev, [key]: value }));
 
             const themes = {
-                light: { body: { color: '#000', background: '#fff' } },
-                sepia: { body: { color: '#5f4b32', background: '#f6f1d1' } },
-                dark: { body: { color: '#d1d1d1', background: '#1c1c1e' } }
+                light: { body: { background: '#fff' } }, 
+                sepia: { body: { background: '#f6f1d1' } },
+                dark: { body: { background: '#1c1c1e' } }
             };
 
             const getHighlightColorCode = (colorName, currentTheme) => {
                 if (colorName === 'none') return 'inherit';
                 const isDark = currentTheme === 'dark';
-                const colors = {
-                    blue: isDark ? '#60a5fa' : '#2563eb',   
-                    red: isDark ? '#f87171' : '#dc2626',
-                    purple: isDark ? '#c084fc' : '#9333ea',
-                };
+                const colors = { blue: isDark ? '#60a5fa' : '#2563eb', red: isDark ? '#f87171' : '#dc2626', purple: isDark ? '#c084fc' : '#9333ea' };
                 return colors[colorName] || 'inherit';
             };
 
             useEffect(() => {
                 const init = async () => {
                     if (!bookId) return;
-                    
-                    // 1. Fetch Metadata
                     const bookMeta = await dbOp('readonly', 'books', s => s.get(bookId));
                     if (!bookMeta || !bookMeta.epubId) return;
-
-                    // 2. Fetch File
                     const f = await dbOp('readonly', 'files', s => s.get(bookMeta.epubId));
                     if (!f) return;
                     
                     const newBook = ePub(f.data);
                     setBook(newBook);
-                    
-                    const rend = newBook.renderTo(viewerRef.current, { 
-                        width: "100%", 
-                        height: "100%", 
-                        flow: "paginated" 
-                    });
+                    const rend = newBook.renderTo(viewerRef.current, { width: "100%", height: "100%", flow: "paginated" });
                     setRendition(rend);
 
-                    // 3. Register Quote Hook
                     rend.hooks.content.register((contents) => {
                         const doc = contents.document;
+                        const style = doc.createElement('style');
+                        style.textContent = `.dialogue-text { display: inline; }`;
+                        doc.head.appendChild(style);
                         const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, null, false);
                         const nodes = [];
                         while(walker.nextNode()) nodes.push(walker.currentNode);
-
                         nodes.forEach(node => {
                             if (!node.nodeValue) return;
                             const regex = /([“"”][^"”]*[”"“])/g;
@@ -249,6 +271,7 @@
                                     const span = doc.createElement('span');
                                     span.className = 'dialogue-text';
                                     span.textContent = match;
+                                    span.dataset.type = 'dialogue';
                                     fragment.appendChild(span);
                                     lastIndex = arguments[arguments.length - 2] + match.length;
                                     return match;
@@ -260,55 +283,133 @@
                         });
                     });
 
-                    // 4. Display at Last Saved Location
                     const initialLocation = bookMeta.lastReadLocation || undefined;
                     await rend.display(initialLocation);
                     
                     newBook.ready.then(() => newBook.locations.generate(1000)).then(() => setReady(true));
+                    
                     const navigation = await newBook.loaded.navigation;
-                    setToc(navigation.toc);
+                    if (bookMeta.customTOC) {
+                        setToc(bookMeta.customTOC);
+                    } else {
+                        setToc(navigation.toc);
+                    }
 
                     rend.themes.register('light', themes.light);
                     rend.themes.register('sepia', themes.sepia);
                     rend.themes.register('dark', themes.dark);
                     
-                    // 5. Save Location on Move
                     rend.on('relocated', (location) => {
                         setProgress(Math.floor(location.start.percentage * 100));
-                        // Atomic patch to avoid overwriting audio progress
                         patchBook(bookId, { lastReadLocation: location.start.cfi });
                     });
                 };
                 init();
+                return () => { if (audioPlayerRef.current) { audioPlayerRef.current.pause(); audioPlayerRef.current.src = ""; } };
             }, [bookId]);
 
             useEffect(() => {
                 if(rendition) {
-                    rendition.themes.select(theme);
-                    rendition.themes.fontSize(fontSize + '%');
-                    rendition.themes.font(fontFamily);
-                    const colorCode = getHighlightColorCode(highlightColor, theme);
-                    rendition.themes.register('highlights', { '.dialogue-text': { 'color': colorCode } });
-                    rendition.themes.select('highlights');
+                    rendition.themes.select(settings.theme);
+                    rendition.themes.fontSize(settings.fontSize + '%');
+                    rendition.themes.font(settings.fontFamily);
+                    const dialogueColor = getHighlightColorCode(settings.highlightColor, settings.theme);
+                    rendition.themes.register('custom', { 'body': { 'color': `${settings.textColor} !important` }, '.dialogue-text': { 'color': `${dialogueColor} !important` } });
+                    rendition.themes.select('custom');
                 }
-            }, [theme, fontSize, fontFamily, highlightColor, rendition]);
+            }, [settings, rendition]);
 
-            const handleSlider = (e) => {
-                const val = e.target.value;
-                setProgress(val);
-                if (book && book.locations.length() > 0) {
-                    const cfi = book.locations.cfiFromPercentage(val / 100);
-                    rendition.display(cfi);
-                }
+            // TOC Management
+            const scanChapters = async () => {
+                if (!book) return;
+                setScanning(true);
+                const newToc = [];
+                try {
+                    for (let i = 0; i < book.spine.length; i++) {
+                        const item = book.spine.get(i);
+                        const doc = await item.load(book.load.bind(book));
+                        const titleEl = doc.querySelector('h1, h2, h3, .title, .chapter');
+                        let label = "";
+                        if (titleEl && titleEl.innerText.trim().length > 0 && titleEl.innerText.length < 100) {
+                            label = titleEl.innerText.trim();
+                        } else {
+                            const pTags = doc.querySelectorAll('p');
+                            for (let p of pTags) {
+                                const text = p.innerText.trim();
+                                if (/^(Chapter|Part|Prologue|Epilogue)\s+\d+/i.test(text) || /^\d+$/.test(text)) {
+                                    if (text.length < 50) { label = text; break; }
+                                }
+                            }
+                        }
+                        if (label) newToc.push({ label: label, href: item.href });
+                    }
+                    if (newToc.length > 0) {
+                        setToc(newToc);
+                        await patchBook(bookId, { customTOC: newToc });
+                        alert(`Found ${newToc.length} chapters.`);
+                    } else {
+                        alert("No chapters detected.");
+                    }
+                } catch (e) { console.error(e); alert("Scan failed."); } finally { setScanning(false); }
             };
 
+            const updateTocItem = (index, newLabel) => {
+                const newToc = [...toc];
+                newToc[index] = { ...newToc[index], label: newLabel };
+                setToc(newToc);
+            };
+
+            const saveTOC = async () => {
+                await patchBook(bookId, { customTOC: toc });
+                setIsEditingTOC(false);
+            };
+
+            // AI Features
+            const getCurrentChapterText = async () => {
+                if (!rendition || !book) return null;
+                const cfi = rendition.currentLocation().start.cfi;
+                const item = book.spine.get(cfi);
+                if (!item) return null;
+                const doc = await item.load(book.load.bind(book));
+                return doc.body.innerText;
+            };
+
+            const handleSummary = async () => {
+                setAiModal('summary'); setSummaryText(null);
+                try {
+                    const text = await getCurrentChapterText();
+                    if (!text) throw new Error("Could not extract text");
+                    const summary = await callGeminiSummary(text);
+                    setSummaryText(summary);
+                } catch (e) { setSummaryText("Error: " + e.message); }
+            };
+
+            const handleTTS = async () => {
+                if (isReadingAloud) { audioPlayerRef.current.pause(); setIsReadingAloud(false); return; }
+                try {
+                    const range = rendition.getRange(rendition.currentLocation().start.cfi);
+                    const visibleText = range.toString();
+                    if (!visibleText || visibleText.length < 10) { alert("Not enough text."); return; }
+                    setIsReadingAloud(true);
+                    const audioUrl = await callGeminiTTS(visibleText);
+                    audioPlayerRef.current.src = audioUrl; audioPlayerRef.current.play(); audioPlayerRef.current.onended = () => setIsReadingAloud(false);
+                } catch (e) { alert("TTS Error: " + e.message); setIsReadingAloud(false); }
+            };
+
+            const handleSlider = (e) => {
+                const val = e.target.value; setProgress(val);
+                if (book && book.locations.length() > 0) { const cfi = book.locations.cfiFromPercentage(val / 100); rendition.display(cfi); }
+            };
             const nav = (dir) => { if(rendition) dir === 'next' ? rendition.next() : rendition.prev(); };
 
             return (
-                <div className={`fixed inset-0 z-50 flex flex-col ${theme === 'dark' ? 'bg-[#1c1c1e] text-gray-200' : (theme === 'sepia' ? 'bg-[#f6f1d1] text-[#5f4b32]' : 'bg-white text-gray-900')}`}>
-                    <div className={`h-14 border-b flex items-center justify-between px-4 safe-top z-20 ${theme === 'dark' ? 'border-gray-800' : 'border-gray-200 bg-white/50 backdrop-blur'}`}>
+                <div className={`fixed inset-0 z-50 flex flex-col ${settings.theme === 'dark' ? 'bg-[#1c1c1e] text-gray-200' : (settings.theme === 'sepia' ? 'bg-[#f6f1d1] text-[#5f4b32]' : 'bg-white text-gray-900')}`}>
+                    <div className={`h-14 border-b flex items-center justify-between px-4 safe-top z-20 ${settings.theme === 'dark' ? 'border-gray-800' : 'border-gray-200 bg-white/50 backdrop-blur'}`}>
                         <button onClick={onClose} className="text-ios-blue font-semibold">Done</button>
-                        <div className="flex gap-4">
+                        <div className="flex gap-2">
+                             <button onClick={handleTTS} className={`p-2 rounded-full ${isReadingAloud ? 'bg-ios-blue text-white animate-pulse' : 'hover:bg-black/5'}`} title="AI Narrator"><Icon name="headphones" size={20} /></button>
+                             <button onClick={handleSummary} className="p-2 rounded-full hover:bg-black/5" title="Summarize"><Icon name="sparkles" size={20} /></button>
+                            <div className="w-px h-6 bg-gray-300 mx-1"></div>
                             <button onClick={() => { setShowAppearance(!showAppearance); setShowTOC(false); }} className="p-2 rounded-full hover:bg-black/5"><Icon name="type" size={20} /></button>
                             <button onClick={() => { setShowTOC(!showTOC); setShowAppearance(false); }} className="p-2 rounded-full hover:bg-black/5"><Icon name="list" size={20} /></button>
                         </div>
@@ -321,46 +422,65 @@
                         <div className="absolute inset-y-0 right-0 w-20 z-0" onClick={() => nav('next')}></div>
                     </div>
 
-                    <div className={`h-16 border-t px-6 flex flex-col justify-center safe-bottom z-20 ${theme === 'dark' ? 'border-gray-800 bg-[#1c1c1e]' : 'border-gray-200 bg-white'}`}>
+                    <div className={`h-16 border-t px-6 flex flex-col justify-center safe-bottom z-20 ${settings.theme === 'dark' ? 'border-gray-800 bg-[#1c1c1e]' : 'border-gray-200 bg-white'}`}>
                         <input type="range" min="0" max="100" step="1" value={progress} onChange={handleSlider} className="w-full h-1 bg-gray-300 rounded-full mb-1" />
                         <div className="flex justify-between text-[10px] opacity-50 font-mono"><span>{progress}%</span><span>{book?.locations?.total || '...'} locs</span></div>
                     </div>
 
                     {showTOC && (
                         <div className="absolute inset-0 top-14 bottom-16 bg-black/50 backdrop-blur-sm z-30" onClick={() => setShowTOC(false)}>
-                            <div className={`absolute top-0 right-0 bottom-0 w-72 shadow-2xl overflow-y-auto animate-in slide-in-from-right ${theme === 'dark' ? 'bg-[#2c2c2e]' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
-                                <div className="p-4 font-bold border-b border-gray-200/10">Contents</div>
-                                {toc.map((item, i) => (
-                                    <div key={i} onClick={() => { rendition.display(item.href); setShowTOC(false); }} className="p-3 border-b border-gray-200/10 text-sm hover:bg-white/10 cursor-pointer">{item.label}</div>
-                                ))}
+                            <div className={`absolute top-0 right-0 bottom-0 w-72 shadow-2xl overflow-y-auto animate-in slide-in-from-right flex flex-col ${settings.theme === 'dark' ? 'bg-[#2c2c2e]' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
+                                <div className="p-4 font-bold border-b border-gray-200/10 flex justify-between items-center">
+                                    <span>Contents</span>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => isEditingTOC ? saveTOC() : setIsEditingTOC(true)} className={`text-xs px-2 py-1 rounded ${isEditingTOC ? 'bg-ios-blue text-white' : 'bg-gray-200 text-gray-800'}`}>{isEditingTOC ? "Done" : "Edit"}</button>
+                                        {!isEditingTOC && <button onClick={scanChapters} className="text-xs bg-gray-200 text-gray-800 px-2 py-1 rounded" disabled={scanning}>{scanning ? "Scanning..." : "Auto-Detect"}</button>}
+                                    </div>
+                                </div>
+                                <div className="flex-1 overflow-y-auto">
+                                    {toc.map((item, i) => (
+                                        <div key={i} className="p-3 border-b border-gray-200/10 text-sm hover:bg-white/10 flex items-center">
+                                            {isEditingTOC ? (
+                                                <input type="text" value={item.label} onChange={(e) => updateTocItem(i, e.target.value)} className="w-full bg-transparent border-b border-gray-300 focus:outline-none focus:border-ios-blue py-1" />
+                                            ) : (
+                                                <div onClick={() => { rendition.display(item.href); setShowTOC(false); }} className="cursor-pointer w-full">{item.label}</div>
+                                            )}
+                                        </div>
+                                    ))}
+                                    {toc.length === 0 && !scanning && <div className="p-8 text-center text-gray-400 text-sm">No chapters found.<br/>Try Auto-Detect.</div>}
+                                </div>
                             </div>
                         </div>
                     )}
 
                     {showAppearance && (
                         <div className="absolute inset-0 z-30" onClick={() => setShowAppearance(false)}>
-                             <div className={`absolute top-16 right-4 w-72 rounded-xl shadow-2xl p-4 animate-in zoom-in-95 ${theme === 'dark' ? 'bg-[#2c2c2e] border border-gray-700' : 'bg-white border border-gray-200'}`} onClick={e => e.stopPropagation()}>
+                             <div className={`absolute top-16 right-4 w-72 rounded-xl shadow-2xl p-4 animate-in zoom-in-95 ${settings.theme === 'dark' ? 'bg-[#2c2c2e] border border-gray-700' : 'bg-white border border-gray-200'}`} onClick={e => e.stopPropagation()}>
                                  <div className="flex justify-between bg-gray-200/20 rounded-lg p-1 mb-4">
                                      {['light', 'sepia', 'dark'].map(t => (
-                                         <button key={t} onClick={() => setTheme(t)} className={`flex-1 py-2 rounded-md capitalize text-sm font-medium ${theme === t ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-900'}`} style={theme === t && t === 'dark' ? {background: '#555', color: 'white'} : {}}>{t}</button>
+                                         <button key={t} onClick={() => updateSetting('theme', t)} className={`flex-1 py-2 rounded-md capitalize text-sm font-medium ${settings.theme === t ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-900'}`} style={settings.theme === t && t === 'dark' ? {background: '#555', color: 'white'} : {}}>{t}</button>
                                      ))}
                                  </div>
                                  <div className="flex justify-between gap-2 mb-4">
-                                     <button onClick={() => setFontFamily('sans-serif')} className={`flex-1 py-2 border rounded-lg text-sm ${fontFamily === 'sans-serif' ? 'border-ios-blue text-ios-blue bg-blue-50/10' : 'border-gray-200/20'}`}>Sans</button>
-                                     <button onClick={() => setFontFamily('serif')} className={`flex-1 py-2 border rounded-lg text-sm font-serif ${fontFamily === 'serif' ? 'border-ios-blue text-ios-blue bg-blue-50/10' : 'border-gray-200/20'}`}>Serif</button>
+                                     <button onClick={() => updateSetting('fontFamily', 'sans-serif')} className={`flex-1 py-2 border rounded-lg text-sm ${settings.fontFamily === 'sans-serif' ? 'border-ios-blue text-ios-blue bg-blue-50/10' : 'border-gray-200/20'}`}>Sans</button>
+                                     <button onClick={() => updateSetting('fontFamily', 'serif')} className={`flex-1 py-2 border rounded-lg text-sm font-serif ${settings.fontFamily === 'serif' ? 'border-ios-blue text-ios-blue bg-blue-50/10' : 'border-gray-200/20'}`}>Serif</button>
                                  </div>
                                  <div className="flex items-center justify-between gap-4 mb-4">
-                                     <button onClick={() => setFontSize(Math.max(50, fontSize - 10))} className="p-2 border rounded-lg border-gray-200/20"><Icon name="minus" size={16} /></button>
-                                     <span className="text-sm font-mono w-12 text-center">{fontSize}%</span>
-                                     <button onClick={() => setFontSize(Math.min(200, fontSize + 10))} className="p-2 border rounded-lg border-gray-200/20"><Icon name="plus" size={16} /></button>
+                                     <button onClick={() => updateSetting('fontSize', Math.max(50, settings.fontSize - 10))} className="p-2 border rounded-lg border-gray-200/20"><Icon name="minus" size={16} /></button>
+                                     <span className="text-sm font-mono w-12 text-center">{settings.fontSize}%</span>
+                                     <button onClick={() => updateSetting('fontSize', Math.min(200, settings.fontSize + 10))} className="p-2 border rounded-lg border-gray-200/20"><Icon name="plus" size={16} /></button>
+                                 </div>
+                                 <div className="mb-4">
+                                     <div className="text-xs uppercase font-bold opacity-50 mb-2">Text Color</div>
+                                     <input type="color" value={settings.textColor} onChange={(e) => updateSetting('textColor', e.target.value)} className="w-full h-8 rounded cursor-pointer" />
                                  </div>
                                  <div className="border-t border-gray-200/10 pt-3">
                                      <div className="text-xs uppercase font-bold opacity-50 mb-2">Dialogue Color</div>
                                      <div className="flex gap-2">
                                          {['none', 'blue', 'red', 'purple'].map(c => (
-                                             <button key={c} onClick={() => setHighlightColor(c)} className={`flex-1 h-8 rounded border flex items-center justify-center ${highlightColor === c ? 'border-black/50 shadow-inner' : 'border-transparent'}`} style={{background: c === 'none' ? 'transparent' : getHighlightColorCode(c, 'light'), border: c === 'none' ? '1px solid #ccc' : ''}}>
+                                             <button key={c} onClick={() => updateSetting('highlightColor', c)} className={`flex-1 h-8 rounded border flex items-center justify-center ${settings.highlightColor === c ? 'border-black/50 shadow-inner' : 'border-transparent'}`} style={{background: c === 'none' ? 'transparent' : getHighlightColorCode(c, 'light'), border: c === 'none' ? '1px solid #ccc' : ''}}>
                                                 {c === 'none' && <Icon name="slash" size={12} className="opacity-50" />}
-                                                {highlightColor === c && c !== 'none' && <div className="w-2 h-2 bg-white rounded-full"></div>}
+                                                {settings.highlightColor === c && c !== 'none' && <div className="w-2 h-2 bg-white rounded-full"></div>}
                                              </button>
                                          ))}
                                      </div>
@@ -368,11 +488,12 @@
                              </div>
                         </div>
                     )}
+                    
+                    {aiModal === 'summary' && <AIModal type="summary" content={summaryText} onClose={() => setAiModal(null)} />}
                 </div>
             );
         };
 
-        // 3. BOOK EDITOR (Unchanged)
         const BookEditor = ({ bookId, onClose, onSave }) => {
             const [title, setTitle] = useState("Untitled Book");
             const [author, setAuthor] = useState("Unknown Author");
@@ -496,6 +617,17 @@
                 setTracks(sorted);
             };
 
+            const shuffleTracks = () => {
+                setTracks(prev => {
+                    const shuffled = [...prev];
+                    for (let i = shuffled.length - 1; i > 0; i--) {
+                        const j = Math.floor(Math.random() * (i + 1));
+                        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+                    }
+                    return shuffled;
+                });
+            };
+
             const removeTrack = (idx) => { setTracks(prev => prev.filter((_, i) => i !== idx)); };
 
             const handleSave = async () => {
@@ -546,7 +678,10 @@
 
                         <div className="mb-2 flex items-center justify-between px-1">
                             <h3 className="font-bold text-gray-500 uppercase tracking-wide text-xs">Audio Tracks ({tracks.length})</h3>
-                            <button onClick={sortTracks} className="text-ios-blue text-xs font-medium">Sort by Name</button>
+                            <div className="flex gap-2">
+                                <button onClick={shuffleTracks} className="text-ios-blue text-xs font-medium">Shuffle</button>
+                                <button onClick={sortTracks} className="text-ios-blue text-xs font-medium">Sort by Name</button>
+                            </div>
                         </div>
 
                         <div className="bg-white rounded-xl shadow-sm overflow-hidden">
@@ -576,7 +711,6 @@
             );
         };
 
-        // 4. PLAYER (Gapless Logic)
         const Player = ({ bookId, onBack }) => {
             const audioRef = useRef(null);
             const [book, setBook] = useState(null);
@@ -626,7 +760,6 @@
 
             const updateBookProgress = (t) => {
                 if (!bookId) return;
-                // Atomic Patch
                 patchBook(bookId, { currentTime: t });
             };
 
@@ -762,12 +895,12 @@
             );
         };
 
-        // 5. MAIN APP
         const App = () => {
             const [view, setView] = useState('library'); 
             const [activeBookId, setActiveBookId] = useState(null);
             const [editingBookId, setEditingBookId] = useState(null);
             const [isEditing, setIsEditing] = useState(false);
+            const [showSettings, setShowSettings] = useState(false);
             const [books, setBooks] = useState([]);
             const [covers, setCovers] = useState({});
 
@@ -790,9 +923,14 @@
                         <div className="h-full bg-ios-bg p-6 safe-top overflow-y-auto">
                             <header className="flex justify-between items-center mb-6">
                                 <h1 className="text-3xl font-bold tracking-tight">Library</h1>
-                                <button onClick={() => { setEditingBookId(null); setIsEditing(true); }} className="bg-ios-blue text-white rounded-full p-2 shadow-lg active:scale-95 transition">
-                                    <Icon name="plus" />
-                                </button>
+                                <div className="flex gap-2">
+                                    <button onClick={() => setShowSettings(true)} className="bg-white text-gray-600 rounded-full p-2 shadow-sm border active:scale-95 transition">
+                                        <Icon name="settings" size={20} />
+                                    </button>
+                                    <button onClick={() => { setEditingBookId(null); setIsEditing(true); }} className="bg-ios-blue text-white rounded-full p-2 shadow-lg active:scale-95 transition">
+                                        <Icon name="plus" size={20} />
+                                    </button>
+                                </div>
                             </header>
 
                             <div className="grid grid-cols-2 gap-4 pb-20">
@@ -825,6 +963,8 @@
                             onSave={() => { setIsEditing(false); loadLibrary(); }} 
                         />
                     )}
+
+                    {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
                 </>
             );
         };
