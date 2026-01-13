@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -95,13 +94,12 @@
                     chunks.push(currentText);
                     break;
                 }
-                // Intelligent split: try sentence ending, then clause, then space
                 let splitIndex = currentText.lastIndexOf('.', maxLength);
                 if (splitIndex === -1 || splitIndex < maxLength / 2) splitIndex = currentText.lastIndexOf('?', maxLength);
                 if (splitIndex === -1 || splitIndex < maxLength / 2) splitIndex = currentText.lastIndexOf('!', maxLength);
                 if (splitIndex === -1 || splitIndex < maxLength / 2) splitIndex = currentText.lastIndexOf('"', maxLength);
                 if (splitIndex === -1 || splitIndex < maxLength / 2) splitIndex = currentText.lastIndexOf(' ', maxLength);
-                if (splitIndex === -1) splitIndex = maxLength; // Hard cut
+                if (splitIndex === -1) splitIndex = maxLength;
 
                 chunks.push(currentText.substring(0, splitIndex + 1));
                 currentText = currentText.substring(splitIndex + 1).trim();
@@ -179,6 +177,47 @@
             const store = tx.objectStore('files');
             files.forEach(f => store.put(f));
             return new Promise(resolve => tx.oncomplete = resolve);
+        };
+        
+        // Deep delete helper
+        const deleteBookDeep = async (bookId) => {
+            const db = await openDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(['books', 'files'], 'readwrite');
+                const booksStore = tx.objectStore('books');
+                const filesStore = tx.objectStore('files');
+
+                // 1. Get the book first
+                const req = booksStore.get(bookId);
+                
+                req.onsuccess = () => {
+                    const book = req.result;
+                    if (!book) {
+                        resolve();
+                        return;
+                    }
+
+                    // 2. Delete Cover
+                    if (book.coverId) filesStore.delete(book.coverId);
+
+                    // 3. Delete EPUB
+                    if (book.epubId) filesStore.delete(book.epubId);
+
+                    // 4. Delete Audio Files
+                    if (book.tracks && Array.isArray(book.tracks)) {
+                        book.tracks.forEach(track => {
+                            if (track.fileId) filesStore.delete(track.fileId);
+                        });
+                    }
+
+                    // 5. Delete Book Record
+                    booksStore.delete(bookId);
+                };
+
+                req.onerror = () => reject(req.error);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
         };
 
         const Icon = ({ name, size = 24, className = "" }) => {
@@ -656,7 +695,7 @@
             );
         };
 
-        const BookEditor = ({ bookId, onClose, onSave }) => {
+        const BookEditor = ({ bookId, onClose, onSave, onDelete }) => {
             const [title, setTitle] = useState("Untitled Book");
             const [author, setAuthor] = useState("Unknown Author");
             const [coverId, setCoverId] = useState(null);
@@ -666,6 +705,7 @@
             const [processing, setProcessing] = useState(false);
             const [status, setStatus] = useState("");
             const [splitTarget, setSplitTarget] = useState(null);
+            const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
             useEffect(() => {
                 if (!bookId) return;
@@ -804,6 +844,20 @@
                 await dbOp('readwrite', 'books', s => s.put(book));
                 onSave();
             };
+            
+            const handleDeleteBook = async () => {
+                if (!bookId) return;
+                setProcessing(true);
+                setStatus("Deleting...");
+                try {
+                    await deleteBookDeep(bookId);
+                    onDelete();
+                } catch (e) {
+                    console.error(e);
+                    alert("Failed to delete book.");
+                    setProcessing(false);
+                }
+            };
 
             return (
                 <div className="fixed inset-0 z-50 bg-ios-bg flex flex-col animate-in slide-in-from-bottom duration-300">
@@ -846,7 +900,7 @@
                             </div>
                         </div>
 
-                        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+                        <div className="bg-white rounded-xl shadow-sm overflow-hidden mb-6">
                             {tracks.length === 0 ? <div className="p-6 text-center text-gray-400 text-sm">No tracks yet.</div> : (
                                 <div className="divide-y divide-gray-100">
                                     {tracks.map((t, idx) => (
@@ -867,6 +921,37 @@
                                 )}
                             </div>
                         </div>
+
+                        {bookId && (
+                            <div className="mt-8 mb-4 px-2">
+                                {!showDeleteConfirm ? (
+                                    <button 
+                                        onClick={() => setShowDeleteConfirm(true)} 
+                                        className="w-full py-3.5 rounded-xl bg-red-50 text-red-500 font-semibold text-sm border border-red-100 hover:bg-red-100 transition-colors"
+                                    >
+                                        Delete Book
+                                    </button>
+                                ) : (
+                                    <div className="bg-red-50 rounded-xl p-4 border border-red-100 animate-in fade-in slide-in-from-bottom-2">
+                                        <p className="text-center text-red-800 font-medium mb-3 text-sm">Are you sure? This action cannot be undone.</p>
+                                        <div className="flex gap-3">
+                                            <button 
+                                                onClick={() => setShowDeleteConfirm(false)} 
+                                                className="flex-1 py-3 rounded-lg bg-white text-gray-700 font-semibold text-sm border border-gray-200"
+                                            >
+                                                Cancel
+                                            </button>
+                                            <button 
+                                                onClick={handleDeleteBook} 
+                                                className="flex-1 py-3 rounded-lg bg-red-500 text-white font-semibold text-sm shadow-md"
+                                            >
+                                                Confirm Delete
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                     {splitTarget && <SplitOptions file={splitTarget.file} onSplitByTime={executeSplitByTime} onSplitSilence={executeSplitSilence} onCancel={() => setSplitTarget(null)} />}
                 </div>
@@ -1123,6 +1208,7 @@
                             bookId={editingBookId} 
                             onClose={() => setIsEditing(false)} 
                             onSave={() => { setIsEditing(false); loadLibrary(); }} 
+                            onDelete={() => { setIsEditing(false); loadLibrary(); }}
                         />
                     )}
 
@@ -1136,3 +1222,4 @@
     </script>
 </body>
 </html>
+
