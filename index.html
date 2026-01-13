@@ -105,6 +105,7 @@
             if (!key) throw new Error("API Key missing");
             const safeText = text.length > 4000 ? text.substring(0, 4000) : text;
             
+            // Using the requested preview model
             const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-tts:generateContent?key=${key}`;
             const payload = { 
                 contents: [{ parts: [{ text: safeText }] }], 
@@ -493,6 +494,42 @@
                 }
             };
 
+            // --- IMPROVED TEXT EXTRACTION ---
+            const getVisibleText = () => {
+                if (!rendition) return null;
+                try {
+                    const range = rendition.getRange(rendition.currentLocation().start.cfi, rendition.currentLocation().end.cfi);
+                    return range ? range.toString() : null;
+                } catch(e) { return null; }
+            };
+
+            // Robust text extraction with fallback and timeout
+            const extractTextSafe = async () => {
+                if (!rendition || !book) return null;
+                
+                // Strategy 1: Visible Text (Instant)
+                const visible = getVisibleText();
+                
+                // Strategy 2: Full Chapter (Async, might fail/timeout)
+                try {
+                    const cfi = rendition.currentLocation().start.cfi;
+                    const item = book.spine.get(cfi);
+                    if (!item) return visible; // Fallback to visible if spine fails
+
+                    // Hard timeout for extraction (2s)
+                    const extractPromise = item.load(book.load.bind(book)).then(doc => {
+                        return doc.body ? doc.body.innerText : (doc.documentElement ? doc.documentElement.innerText : "");
+                    });
+                    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject("Timeout"), 2000));
+                    
+                    const fullText = await Promise.race([extractPromise, timeoutPromise]);
+                    return fullText && fullText.length > 20 ? fullText : visible;
+                } catch (e) {
+                    console.warn("Full chapter extract failed, using visible text", e);
+                    return visible;
+                }
+            };
+
             const handleTTS = async () => {
                 if (isReadingAloud) { 
                     stopAudio();
@@ -502,8 +539,6 @@
                 // CRITICAL IOS FIX: Wake up audio engine IMMEDIATELY on click
                 if (audioCtx.current) {
                     if(audioCtx.current.state === 'suspended') await audioCtx.current.resume();
-                    
-                    // Play Silent Buffer explicitly to warm up engine while we wait for network
                     const buffer = audioCtx.current.createBuffer(1, 1, 22050);
                     const source = audioCtx.current.createBufferSource();
                     source.buffer = buffer;
@@ -511,30 +546,20 @@
                     source.start(0);
                 }
 
-                setAudioStatus("Analyzing text...");
                 setIsReadingAloud(true);
+                setAudioStatus("Analyzing text...");
                 
                 try {
-                    // METHOD 1: Try reading active view first (fastest)
-                    let fullText = "";
-                    const contents = rendition.getContents();
-                    if (contents && contents.length > 0) {
-                        fullText = contents[0].document.body.innerText;
-                    }
-
-                    // METHOD 2: Fallback to extraction
-                    if (!fullText || fullText.trim().length < 5) {
-                        fullText = await getCurrentChapterText();
-                    }
+                    const fullText = await extractTextSafe();
 
                     if (!fullText || fullText.trim().length < 5) {
-                        alert("No text found in this chapter.");
+                        alert("No text found. Try turning pages.");
                         setAudioStatus("");
                         setIsReadingAloud(false);
                         return;
                     }
 
-                    // Chunking and Start
+                    // Calculate Start Position based on visible text
                     let startIdx = 0;
                     const visible = getVisibleText();
                     if (visible && visible.length > 20) {
@@ -552,38 +577,16 @@
                     playNextChunk();
 
                 } catch (e) { 
-                    alert("TTS Error: " + e.message); 
+                    alert("TTS Error: " + (e.message || e)); 
                     setIsReadingAloud(false); 
                     setAudioStatus("");
                 }
             };
 
-            // ... Text Helpers ...
-            const getVisibleText = () => {
-                if (!rendition) return null;
-                try {
-                    const range = rendition.getRange(rendition.currentLocation().start.cfi, rendition.currentLocation().end.cfi);
-                    return range.toString();
-                } catch(e) { return null; }
-            };
-
-            const getCurrentChapterText = async () => {
-                if (!rendition || !book) return null;
-                try {
-                    const cfi = rendition.currentLocation().start.cfi;
-                    const item = book.spine.get(cfi);
-                    if (!item) return null;
-                    const loadPromise = item.load(book.load.bind(book));
-                    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 5000));
-                    const doc = await Promise.race([loadPromise, timeoutPromise]);
-                    return doc.body ? doc.body.innerText : (doc.documentElement ? doc.documentElement.innerText : "");
-                } catch(e) { return ""; }
-            };
-
             const handleSummary = async () => {
                 setAiModal('summary'); setSummaryText(null);
                 try {
-                    const text = await getCurrentChapterText();
+                    const text = await extractTextSafe();
                     if (!text || text.length < 50) throw new Error("Could not extract enough text.");
                     const summary = await callGeminiSummary(text);
                     setSummaryText(summary);
