@@ -110,7 +110,7 @@
         const callGeminiTTS = async (text) => {
             const key = getEffectiveApiKey();
             if (!key) throw new Error("API Key missing");
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${key}`;
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-exp-tts-2025-05-19:generateContent?key=${key}`;
             const payload = { contents: [{ parts: [{ text }] }], generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } } } };
             const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
             if (!response.ok) {
