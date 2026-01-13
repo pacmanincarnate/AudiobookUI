@@ -61,7 +61,6 @@
         input[type=range]::-webkit-slider-runnable-track {
             width: 100%; height: 4px; background: rgba(0,0,0,0.1); border-radius: 2px;
         }
-        /* Dialogue Highlight Style */
         .dialogue-text { display: inline; color: inherit; }
     </style>
 </head>
@@ -69,7 +68,29 @@
     <div id="root" class="h-full w-full"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef, useCallback, useMemo } = React;
+        const { useState, useEffect, useRef, useCallback, useMemo, Component } = React;
+
+        // --- ERROR BOUNDARY ---
+        class ErrorBoundary extends Component {
+            constructor(props) {
+                super(props);
+                this.state = { hasError: false, error: null };
+            }
+            static getDerivedStateFromError(error) { return { hasError: true, error }; }
+            componentDidCatch(error, errorInfo) { console.error("React Error:", error, errorInfo); }
+            render() {
+                if (this.state.hasError) {
+                    return (
+                        <div className="flex flex-col items-center justify-center h-screen p-6 text-center">
+                            <h2 className="text-xl font-bold text-red-500 mb-2">Something went wrong</h2>
+                            <p className="text-gray-600 text-sm mb-4">{this.state.error?.message}</p>
+                            <button onClick={() => window.location.reload()} className="bg-ios-blue text-white px-4 py-2 rounded-lg">Reload App</button>
+                        </div>
+                    );
+                }
+                return this.props.children;
+            }
+        }
 
         // --- GEMINI API CONFIG ---
         const getEffectiveApiKey = () => localStorage.getItem('gemini_api_key') || '';
@@ -105,7 +126,6 @@
             if (!key) throw new Error("API Key missing");
             const safeText = text.length > 4000 ? text.substring(0, 4000) : text;
             
-            // Using the requested preview model
             const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-tts:generateContent?key=${key}`;
             const payload = { 
                 contents: [{ parts: [{ text: safeText }] }], 
@@ -503,7 +523,6 @@
                 } catch(e) { return null; }
             };
 
-            // Robust text extraction with fallback and timeout
             const extractTextSafe = async () => {
                 if (!rendition || !book) return null;
                 
@@ -514,9 +533,8 @@
                 try {
                     const cfi = rendition.currentLocation().start.cfi;
                     const item = book.spine.get(cfi);
-                    if (!item) return visible; // Fallback to visible if spine fails
+                    if (!item) return visible; 
 
-                    // Hard timeout for extraction (2s)
                     const extractPromise = item.load(book.load.bind(book)).then(doc => {
                         return doc.body ? doc.body.innerText : (doc.documentElement ? doc.documentElement.innerText : "");
                     });
@@ -943,42 +961,65 @@
             const [showReader, setShowReader] = useState(false);
             const [isLoadingTrack, setIsLoadingTrack] = useState(false);
             const activeFileId = useRef(null);
+            const hasInitializedAudio = useRef(false);
 
+            // Effect 1: Load Book Data
             useEffect(() => {
+                let mounted = true;
                 const load = async () => {
-                    const b = await dbOp('readonly', 'books', s => s.get(bookId));
-                    setBook(b);
-                    if (b.coverId) {
-                        const f = await dbOp('readonly', 'files', s => s.get(b.coverId));
-                        if(f) setCover(URL.createObjectURL(f.data));
+                    try {
+                        const b = await dbOp('readonly', 'books', s => s.get(bookId));
+                        if(mounted && b) {
+                            if (!b.tracks) b.tracks = []; // Safety
+                            setBook(b);
+                            if (b.coverId) {
+                                const f = await dbOp('readonly', 'files', s => s.get(b.coverId));
+                                if(f && mounted) setCover(URL.createObjectURL(f.data));
+                            }
+                        }
+                    } catch (e) {
+                        console.error("Failed to load book", e);
                     }
-                    if (b.tracks.length > 0) await loadTrack(b, b.currentTrackIndex || 0, false);
                 };
                 load();
+                return () => { mounted = false; };
             }, [bookId]);
+
+            // Effect 2: Initialize Audio (Only when book AND ref are ready)
+            useEffect(() => {
+                if (book && audioRef.current && book.tracks.length > 0 && !hasInitializedAudio.current) {
+                     hasInitializedAudio.current = true;
+                     loadTrack(book, book.currentTrackIndex || 0, false);
+                }
+            }, [book]);
 
             const loadTrack = async (b, index, autoPlay) => {
                 const track = b.tracks[index];
                 if (!track) return;
+                
                 setIsLoadingTrack(true);
                 const fileId = track.fileId || track.id;
                 const startTime = track.start || 0;
                 
-                if (activeFileId.current !== fileId) {
-                    const f = await dbOp('readonly', 'files', s => s.get(fileId));
-                    if (f) {
-                        const url = URL.createObjectURL(f.data);
-                        audioRef.current.src = url;
-                        // iOS Fix: Explicit load needed when swapping src blob
-                        audioRef.current.load();
-                        activeFileId.current = fileId;
-                        audioRef.current.currentTime = (index === b.currentTrackIndex) ? (b.currentTime || startTime) : startTime;
+                try {
+                    if (activeFileId.current !== fileId) {
+                        const f = await dbOp('readonly', 'files', s => s.get(fileId));
+                        if (f && audioRef.current) {
+                            const url = URL.createObjectURL(f.data);
+                            audioRef.current.src = url;
+                            audioRef.current.load(); // Required for iOS
+                            activeFileId.current = fileId;
+                            audioRef.current.currentTime = (index === b.currentTrackIndex) ? (b.currentTime || startTime) : startTime;
+                        }
+                    } else if (audioRef.current) {
+                        // Check buffer logic
+                        const buffer = 1; 
+                        if (audioRef.current.currentTime < startTime - buffer || audioRef.current.currentTime > (track.start + (track.duration||99999))) {
+                            audioRef.current.currentTime = startTime;
+                        }
                     }
-                } else {
-                    const buffer = 1; 
-                    if (audioRef.current.currentTime < startTime - buffer || audioRef.current.currentTime > (track.start + (track.duration||99999))) {
-                        audioRef.current.currentTime = startTime;
-                    }
+                } catch(e) {
+                    console.error("Error loading track", e);
                 }
                 
                 setIsLoadingTrack(false);
@@ -1001,7 +1042,6 @@
                 } catch (e) {
                     console.error("Playback error", e);
                     setPlaying(false);
-                    // iOS often throws NotAllowedError if the chain wasn't user-initiated
                     if (e.name === 'NotAllowedError') {
                         alert("Tap Play to start audio (iOS requires user interaction).");
                     }
@@ -1018,8 +1058,6 @@
                 const t = b.tracks[idx];
                 b.currentTime = t.start || 0; 
                 setBook(b);
-                // On iOS, changing tracks via async DB fetch might break autoplay permission.
-                // We attempt it, but if it fails, the user will just have to tap Play again.
                 await loadTrack(b, idx, true);
                 patchBook(bookId, { currentTrackIndex: idx, currentTime: b.currentTime });
             };
@@ -1052,7 +1090,7 @@
                 }
             };
 
-            if (!book) return null;
+            if (!book) return <div className="h-full flex items-center justify-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-ios-blue"></div></div>;
 
             const currentTrack = book.tracks[book.currentTrackIndex];
             const trackStart = currentTrack?.start || 0;
@@ -1087,8 +1125,10 @@
                                 value={Math.max(0, sliderVal)} 
                                 onChange={(e) => { 
                                     const seekTime = Number(e.target.value) + trackStart;
-                                    audioRef.current.currentTime = seekTime; 
-                                    setTime(seekTime); 
+                                    if(audioRef.current) {
+                                        audioRef.current.currentTime = seekTime; 
+                                        setTime(seekTime);
+                                    } 
                                 }}
                                 className="w-full h-1 bg-gray-300 rounded-full"
                             />
@@ -1099,7 +1139,7 @@
                         </div>
 
                         <div className="flex items-center justify-between w-full max-w-xs px-6">
-                            <button onClick={() => audioRef.current.currentTime -= 30} className="text-gray-800 flex flex-col items-center gap-1">
+                            <button onClick={() => { if(audioRef.current) audioRef.current.currentTime -= 30; }} className="text-gray-800 flex flex-col items-center gap-1">
                                 <Icon name="rotate-ccw" size={32} /> <span className="text-[10px] font-bold">30</span>
                             </button>
                             <button 
@@ -1113,7 +1153,7 @@
                                     <Icon name={playing ? "pause" : "play"} size={36} className="ml-1 fill-current" />
                                 )}
                             </button>
-                            <button onClick={() => audioRef.current.currentTime += 300} className="text-gray-800 flex flex-col items-center gap-1">
+                            <button onClick={() => { if(audioRef.current) audioRef.current.currentTime += 300; }} className="text-gray-800 flex flex-col items-center gap-1">
                                 <Icon name="rotate-cw" size={32} /> <span className="text-[10px] font-bold">5m</span>
                             </button>
                         </div>
@@ -1162,7 +1202,7 @@
             useEffect(() => { loadLibrary(); }, []);
 
             return (
-                <>
+                <ErrorBoundary>
                     {view === 'library' && (
                         <div className="h-full bg-ios-bg p-6 safe-top overflow-y-auto">
                             <header className="flex justify-between items-center mb-6">
@@ -1209,7 +1249,7 @@
                     )}
 
                     {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
-                </>
+                </ErrorBoundary>
             );
         };
 
