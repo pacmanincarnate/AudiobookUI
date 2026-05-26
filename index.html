@@ -148,7 +148,24 @@
             return buffer;
         };
 
-        const chunkText = (text, maxLength = 3900) => {
+        const pcmToWavUrl = (pcmBytes) => {
+            const wavBuffer = pcmToWav(pcmBytes.buffer);
+            return URL.createObjectURL(new Blob([wavBuffer], { type: 'audio/wav' }));
+        };
+
+        const concatUint8Arrays = (arrays) => {
+            let totalLength = 0;
+            for (const arr of arrays) totalLength += arr.length;
+            const result = new Uint8Array(totalLength);
+            let offset = 0;
+            for (const arr of arrays) {
+                result.set(arr, offset);
+                offset += arr.length;
+            }
+            return result;
+        };
+
+        const chunkText = (text, maxLength = 800) => {
             const chunks = [];
             let currentText = text;
             while (currentText.length > 0) {
@@ -156,14 +173,48 @@
                     chunks.push(currentText);
                     break;
                 }
-                let splitIndex = currentText.lastIndexOf('.', maxLength);
-                if (splitIndex === -1 || splitIndex < maxLength / 2) splitIndex = currentText.lastIndexOf('?', maxLength);
-                if (splitIndex === -1 || splitIndex < maxLength / 2) splitIndex = currentText.lastIndexOf('!', maxLength);
-                if (splitIndex === -1 || splitIndex < maxLength / 2) splitIndex = currentText.lastIndexOf('"', maxLength);
-                if (splitIndex === -1 || splitIndex < maxLength / 2) splitIndex = currentText.lastIndexOf(' ', maxLength);
-                if (splitIndex === -1) splitIndex = maxLength;
-
-                chunks.push(currentText.substring(0, splitIndex + 1));
+                
+                // Find a safe split point
+                let splitIndex = -1;
+                // Search backwards from maxLength for a sentence end
+                for (let i = maxLength; i >= Math.floor(maxLength / 2); i--) {
+                    const char = currentText[i];
+                    if (char === '.' || char === '?' || char === '!') {
+                        // Check if we are inside brackets by looking back
+                        const partBefore = currentText.substring(0, i);
+                        const lastOpen = partBefore.lastIndexOf('[');
+                        const lastClose = partBefore.lastIndexOf(']');
+                        if (lastOpen > lastClose) {
+                            // We are inside a bracket, don't split here
+                            continue;
+                        }
+                        splitIndex = i;
+                        break;
+                    }
+                }
+                
+                // Fallback to space
+                if (splitIndex === -1) {
+                    for (let i = maxLength; i >= Math.floor(maxLength / 2); i--) {
+                        const char = currentText[i];
+                        if (char === ' ') {
+                            const partBefore = currentText.substring(0, i);
+                            const lastOpen = partBefore.lastIndexOf('[');
+                            const lastClose = partBefore.lastIndexOf(']');
+                            if (lastOpen > lastClose) {
+                                continue;
+                            }
+                            splitIndex = i;
+                            break;
+                        }
+                    }
+                }
+                
+                if (splitIndex === -1) {
+                    splitIndex = maxLength;
+                }
+                
+                chunks.push(currentText.substring(0, splitIndex + 1).trim());
                 currentText = currentText.substring(splitIndex + 1).trim();
             }
             return chunks;
@@ -172,7 +223,7 @@
         const callGeminiTTS = async (text) => {
             const key = getEffectiveApiKey();
             if (!key) throw new Error("API Key missing");
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-exp-tts-2025-05-19:generateContent?key=${key}`;
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent?key=${key}`;
             const payload = { contents: [{ parts: [{ text }] }], generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } } } };
             const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
             if (!response.ok) {
@@ -187,20 +238,161 @@
             const len = binaryString.length;
             const bytes = new Uint8Array(len);
             for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
-            const wavBuffer = pcmToWav(bytes.buffer);
-            return URL.createObjectURL(new Blob([wavBuffer], { type: 'audio/wav' }));
+            return bytes; // returns raw PCM bytes
         };
 
         const callGeminiSummary = async (text) => {
             const key = getEffectiveApiKey();
             if (!key) throw new Error("API Key missing");
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${key}`;
-            const payload = { contents: [{ parts: [{ text: "Summarize this chapter concisely:\n\n" + text.substring(0, 10000) }] }] };
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${key}`;
+            const payload = { contents: [{ parts: [{ text: "Summarize this chapter concisely:\n\n" + text.substring(0, 15000) }] }] };
             const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
             if (!response.ok) throw new Error("Summary API Error");
             const data = await response.json();
             return data.candidates?.[0]?.content?.parts?.[0]?.text || "No summary generated.";
         };
+
+        const callGeminiFormatText = async (text) => {
+            const key = getEffectiveApiKey();
+            if (!key) throw new Error("API Key missing");
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${key}`;
+            
+            const systemPrompt = `You are an expert audiobook director and script editor. 
+Your task is to format the following text excerpt from a book chapter to be read by the Google Gemini Native Audio Generation Text-to-Speech (TTS) model.
+You must analyze the mood, tone, genre, and characters of the text, and output a fully directed prompt in the exact format shown below.
+
+Follow these strict rules:
+1. Define a compelling, appropriate voice persona in the AUDIO PROFILE.
+2. Set the physical and emotional vibe in THE SCENE.
+3. In DIRECTOR'S NOTES, define the Style (e.g. dramatic, suspenseful, warm), Pacing (e.g. slow, moderate, varying), and Accent. Keep these concise and aligned with the characters and narrator.
+4. Under TRANSCRIPT, rewrite the text to include the EXACT SAME WORDS as the original, but annotated with inline audio tags in square brackets to steer the model's delivery.
+5. Use tags like [whispers], [sighs], [gasp], [excited], [serious], [trembling], [crying], [short pause], [very slow], [very fast], [sarcastically], [amazed], [giggles], [laughs], [tired] to bring the narrative to life. Put them at appropriate places (e.g. before dialogue, at sentence transitions).
+6. Do not omit any words from the original text under the TRANSCRIPT section.
+
+Your output MUST use the following markdown template exactly:
+
+# AUDIO PROFILE: [Choose a Name]
+## "[Vibe description]"
+
+## THE SCENE: [Scene description]
+[Detail scene environment]
+
+### DIRECTOR'S NOTES
+Style: [Style guidance]
+Pacing: [Pacing guidance]
+Accent: [Accent guidance]
+
+### SAMPLE CONTEXT
+[Narrative context]
+
+#### TRANSCRIPT
+[Your annotated transcript goes here]`;
+
+            const payload = {
+                contents: [
+                    { parts: [{ text: `${systemPrompt}\n\nHere is the text excerpt to format:\n\n${text}` }] }
+                ]
+            };
+            
+            const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.error?.message || "Text formatting API Error");
+            }
+            const data = await response.json();
+            return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        };
+
+        class TTSQueuePlayer {
+            constructor(chunks, header, onChunkStart, onChunkEnd, onError, onFinished) {
+                this.chunks = chunks;
+                this.header = header;
+                this.onChunkStart = onChunkStart;
+                this.onChunkEnd = onChunkEnd;
+                this.onError = onError;
+                this.onFinished = onFinished;
+                
+                this.currentIndex = 0;
+                this.isPlaying = false;
+                this.audioElement = new Audio();
+                this.cache = {}; // index -> Promise of Uint8Array (PCM)
+                
+                this.audioElement.onended = () => {
+                    if (this.onChunkEnd) this.onChunkEnd(this.currentIndex);
+                    this.currentIndex++;
+                    this.playNext();
+                };
+            }
+            
+            prefetch(index) {
+                if (index >= this.chunks.length || this.cache[index]) return;
+                
+                const chunkText = this.chunks[index];
+                const ttsPrompt = this.header ? `${this.header}\n\n#### TRANSCRIPT\n${chunkText}` : chunkText;
+                
+                this.cache[index] = (async () => {
+                    try {
+                        const pcmBytes = await callGeminiTTS(ttsPrompt);
+                        return pcmBytes;
+                    } catch (err) {
+                        console.error(`Error prefetching chunk ${index}`, err);
+                        delete this.cache[index]; // Clear to allow retry
+                        throw err;
+                    }
+                })();
+            }
+            
+            async play() {
+                if (this.isPlaying) return;
+                this.isPlaying = true;
+                this.playNext();
+            }
+            
+            pause() {
+                this.isPlaying = false;
+                this.audioElement.pause();
+            }
+            
+            destroy() {
+                this.pause();
+                this.audioElement.src = "";
+                this.audioElement.onended = null;
+                this.cache = {};
+            }
+            
+            async playNext() {
+                if (!this.isPlaying) return;
+                
+                if (this.currentIndex >= this.chunks.length) {
+                    this.isPlaying = false;
+                    if (this.onFinished) this.onFinished();
+                    return;
+                }
+                
+                const idx = this.currentIndex;
+                if (this.onChunkStart) this.onChunkStart(idx);
+                
+                try {
+                    // Pre-fetch the next chunk
+                    this.prefetch(idx + 1);
+                    
+                    // If current chunk isn't cached/prefetched, fetch it now
+                    if (!this.cache[idx]) {
+                        this.prefetch(idx);
+                    }
+                    
+                    const pcmBytes = await this.cache[idx];
+                    const audioUrl = pcmToWavUrl(pcmBytes);
+                    
+                    this.audioElement.src = audioUrl;
+                    await this.audioElement.play();
+                } catch (err) {
+                    console.error("Playback error in QueuePlayer", err);
+                    this.isPlaying = false;
+                    if (this.onError) this.onError(err);
+                }
+            }
+        }
 
         // --- DB LAYER ---
         const DB_NAME = 'AudiobookManagerDB';
@@ -358,6 +550,179 @@
             );
         };
 
+        const AIGeneratorModal = ({ bookId, chapterTitle, chapterText, onClose, onSave }) => {
+            const [step, setStep] = useState('idle'); // 'idle' -> 'formatting' -> 'review' -> 'generating' -> 'saving' -> 'success' | 'error'
+            const [errorMsg, setErrorMsg] = useState('');
+            const [scriptData, setScriptData] = useState({ header: '', transcript: '' });
+            const [progress, setProgress] = useState(0);
+            const [currentChunk, setCurrentChunk] = useState(0);
+            const [totalChunks, setTotalChunks] = useState(0);
+            
+            const startFormatting = async () => {
+                setStep('formatting');
+                try {
+                    const formatted = await callGeminiFormatText(chapterText);
+                    const parts = formatted.split(/####?\s*TRANSCRIPT/i);
+                    const header = parts[0].trim();
+                    const transcript = parts[1] ? parts[1].trim() : formatted;
+                    setScriptData({ header, transcript });
+                    setStep('review');
+                } catch (e) {
+                    console.error(e);
+                    setErrorMsg(e.message || "Failed to analyze and format text.");
+                    setStep('error');
+                }
+            };
+            
+            useEffect(() => {
+                startFormatting();
+            }, []);
+            
+            const startGeneration = async () => {
+                setStep('generating');
+                try {
+                    const chunks = chunkText(scriptData.transcript, 850);
+                    setTotalChunks(chunks.length);
+                    const pcmChunks = [];
+                    
+                    for (let i = 0; i < chunks.length; i++) {
+                        setCurrentChunk(i + 1);
+                        setProgress(Math.floor((i / chunks.length) * 100));
+                        
+                        const ttsPrompt = scriptData.header ? `${scriptData.header}\n\n#### TRANSCRIPT\n${chunks[i]}` : chunks[i];
+                        const pcmBytes = await callGeminiTTS(ttsPrompt);
+                        pcmChunks.push(pcmBytes);
+                    }
+                    
+                    setProgress(100);
+                    setStep('saving');
+                    
+                    const combinedPCM = concatUint8Arrays(pcmChunks);
+                    const wavBuffer = pcmToWav(combinedPCM.buffer);
+                    const blob = new Blob([wavBuffer], { type: 'audio/wav' });
+                    const fileObj = new File([blob], `${chapterTitle || 'Chapter'}_AI_Generated.wav`, { type: 'audio/wav' });
+                    const fileId = crypto.randomUUID();
+                    
+                    await saveFiles([{ id: fileId, data: fileObj, type: 'audio' }]);
+                    
+                    const bookMeta = await dbOp('readonly', 'books', s => s.get(bookId));
+                    if (bookMeta) {
+                        const tracks = bookMeta.tracks || [];
+                        const newTrack = {
+                            id: fileId,
+                            fileId: fileId,
+                            name: `${chapterTitle || 'Chapter'} (AI Generated)`,
+                            start: 0,
+                            duration: null
+                        };
+                        await patchBook(bookId, { tracks: [...tracks, newTrack] });
+                    }
+                    
+                    setStep('success');
+                    if (onSave) onSave();
+                } catch (e) {
+                    console.error(e);
+                    setErrorMsg(e.message || "Failed to generate audio track.");
+                    setStep('error');
+                }
+            };
+            
+            return (
+                <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/75 backdrop-blur-md p-6 animate-in fade-in">
+                    <div className="bg-[#121115]/95 border border-white/10 text-gray-100 rounded-3xl w-full max-w-lg shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
+                        
+                        {/* Header */}
+                        <div className="p-5 border-b border-white/5 flex items-center gap-2">
+                            <Icon name="music" className="text-brand-red" />
+                            <h3 className="font-serif font-bold text-lg">AI Audio Artisan</h3>
+                        </div>
+                        
+                        {/* Content Body */}
+                        <div className="flex-1 overflow-y-auto p-6 font-sans text-sm leading-relaxed">
+                            {step === 'formatting' && (
+                                <div className="flex flex-col items-center justify-center py-16 text-center">
+                                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-brand-red mb-5"></div>
+                                    <p className="text-gray-200 font-serif text-lg font-semibold italic">Reading & Directing Script...</p>
+                                    <p className="text-gray-400 text-xs mt-2 max-w-xs">Gemini 3.5 Flash is analyzing context, characters, and emotions to add realistic narration directives.</p>
+                                </div>
+                            )}
+                            
+                            {step === 'review' && (
+                                <div className="space-y-4">
+                                    <div className="bg-white/5 border border-white/5 rounded-2xl p-4 max-h-[40vh] overflow-y-auto no-scrollbar font-mono text-xs text-gray-300">
+                                        <div className="text-[10px] text-brand-red uppercase tracking-wider font-bold mb-2">Artistic Direction Generated:</div>
+                                        <pre className="whitespace-pre-wrap font-serif leading-relaxed text-sm italic">{scriptData.header}</pre>
+                                    </div>
+                                    <div className="p-3 bg-brand-red/10 border border-brand-red/20 rounded-xl text-xs text-brand-red flex gap-2">
+                                        <Icon name="info" size={16} className="shrink-0" />
+                                        <span>Proceeding will generate the narrative voice based on these guidelines, inserting appropriate dramatic pauses, whispers, and emphasis.</span>
+                                    </div>
+                                    <div className="flex gap-3 pt-2">
+                                        <button onClick={onClose} className="flex-1 py-3 border border-white/10 hover:bg-white/5 rounded-xl font-sans text-xs font-bold uppercase tracking-widest text-gray-400 hover:text-white transition">Cancel</button>
+                                        <button onClick={startGeneration} className="flex-1 py-3 bg-brand-red hover:bg-[#be2f31] rounded-xl font-sans text-xs font-bold uppercase tracking-widest text-white shadow-lg transition">Generate Voice</button>
+                                    </div>
+                                </div>
+                            )}
+                            
+                            {step === 'generating' && (
+                                <div className="flex flex-col items-center justify-center py-12 text-center">
+                                    <div className="relative flex items-center justify-center mb-6">
+                                        <div className="animate-ping absolute inline-flex h-16 w-16 rounded-full bg-brand-red/20 opacity-75"></div>
+                                        <div className="bg-brand-red text-white h-12 w-12 rounded-full flex items-center justify-center shadow-lg font-bold text-sm">
+                                            {progress}%
+                                        </div>
+                                    </div>
+                                    <p className="text-gray-200 font-serif text-lg font-semibold italic">Synthesizing Audiobook Track...</p>
+                                    <p className="text-gray-400 text-xs mt-1">Chunk {currentChunk} of {totalChunks}</p>
+                                    
+                                    <div className="w-full bg-white/5 border border-white/10 rounded-full h-2 mt-6 overflow-hidden">
+                                        <div className="bg-brand-red h-full rounded-full transition-all duration-300" style={{ width: `${progress}%` }}></div>
+                                    </div>
+                                </div>
+                            )}
+                            
+                            {step === 'saving' && (
+                                <div className="flex flex-col items-center justify-center py-16 text-center">
+                                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-emerald-500 mb-5"></div>
+                                    <p className="text-gray-200 font-serif text-lg font-semibold italic text-emerald-400">Mastering Audio Track...</p>
+                                    <p className="text-gray-400 text-xs mt-2">Stitching speech chunks together and writing high-fidelity WAV file to database...</p>
+                                </div>
+                            )}
+                            
+                            {step === 'success' && (
+                                <div className="flex flex-col items-center justify-center py-10 text-center space-y-4">
+                                    <div className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 h-16 w-16 rounded-full flex items-center justify-center shadow-lg">
+                                        <Icon name="check" size={32} />
+                                    </div>
+                                    <h4 className="font-serif text-xl font-bold text-white">Audiobook Track Ready</h4>
+                                    <p className="text-gray-300 text-sm max-w-sm font-serif italic">
+                                        "{(chapterTitle || 'Chapter')} (AI Generated)" has been added as a track to your Audiobook portfolio.
+                                    </p>
+                                    <div className="pt-4 w-full">
+                                        <button onClick={onClose} className="w-full py-3 bg-brand-red hover:bg-[#be2f31] rounded-xl font-sans text-xs font-bold uppercase tracking-widest text-white shadow-lg transition">Back to Book</button>
+                                    </div>
+                                </div>
+                            )}
+                            
+                            {step === 'error' && (
+                                <div className="flex flex-col items-center justify-center py-10 text-center space-y-4">
+                                    <div className="bg-brand-red/10 text-brand-red border border-brand-red/20 h-16 w-16 rounded-full flex items-center justify-center shadow-lg">
+                                        <Icon name="alert-triangle" size={32} />
+                                    </div>
+                                    <h4 className="font-serif text-lg font-bold text-white">Generation Failed</h4>
+                                    <p className="text-red-400 text-xs font-mono bg-white/5 p-3 rounded-xl border border-white/5 w-full text-left overflow-x-auto whitespace-pre-wrap">{errorMsg}</p>
+                                    <div className="pt-4 flex gap-3 w-full">
+                                        <button onClick={onClose} className="flex-1 py-3 border border-white/10 hover:bg-white/5 rounded-xl font-sans text-xs font-bold uppercase tracking-widest text-gray-400 hover:text-white transition">Close</button>
+                                        <button onClick={startFormatting} className="flex-1 py-3 bg-brand-red hover:bg-[#be2f31] rounded-xl font-sans text-xs font-bold uppercase tracking-widest text-white shadow-lg transition">Try Again</button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
         const EpubReader = ({ bookId, onClose }) => {
             const viewerRef = useRef(null);
             const [book, setBook] = useState(null);
@@ -373,15 +738,14 @@
             const [loadingAudio, setLoadingAudio] = useState(false);
             const [scanning, setScanning] = useState(false);
             const [isEditingTOC, setIsEditingTOC] = useState(false);
-            const audioPlayerRef = useRef(new Audio());
+            const [showGenerator, setShowGenerator] = useState(false);
+            const [chapterTextForGen, setChapterTextForGen] = useState("");
+            const [loadingMessage, setLoadingMessage] = useState("Preparing narration...");
+            const queuePlayerRef = useRef(null);
             
             // Toggle menus & location states
             const [menusVisible, setMenusVisible] = useState(true);
             const [currentLocation, setCurrentLocation] = useState(null);
-
-            // TTS Queue Refs
-            const ttsQueue = useRef([]);
-            const ttsIndex = useRef(0);
 
             const fontOptions = [
                 { label: 'Cormorant Garamond (Literary)', value: '"Cormorant Garamond", Georgia, serif' },
@@ -540,10 +904,8 @@
                 };
                 init();
                 return () => { 
-                    if (audioPlayerRef.current) { 
-                        audioPlayerRef.current.pause(); 
-                        audioPlayerRef.current.src = ""; 
-                        audioPlayerRef.current.onended = null;
+                    if (queuePlayerRef.current) { 
+                        queuePlayerRef.current.destroy(); 
                     } 
                 };
             }, [bookId]);
@@ -649,48 +1011,18 @@
                 } catch (e) { setSummaryText("Error: " + e.message); }
             };
 
-            const playNextChunk = async () => {
-                if (!isReadingAloud) return; // Stopped
-                if (ttsIndex.current >= ttsQueue.current.length) {
-                    setIsReadingAloud(false);
-                    return;
-                }
-
-                setLoadingAudio(true);
-                const text = ttsQueue.current[ttsIndex.current];
-                
-                try {
-                    const audioUrl = await callGeminiTTS(text);
-                    audioPlayerRef.current.src = audioUrl;
-                    
-                    // Increment for next time
-                    ttsIndex.current++;
-                    
-                    // Trigger next chunk when this one ends
-                    audioPlayerRef.current.onended = () => {
-                        // Small delay or direct? Direct is better for continuous
-                        playNextChunk();
-                    };
-                    
-                    await audioPlayerRef.current.play();
-                    setLoadingAudio(false);
-                } catch(e) {
-                    console.error("Playback error", e);
-                    setLoadingAudio(false);
-                    setIsReadingAloud(false);
-                    alert("Audio playback stopped: " + e.message);
-                }
-            };
-
             const handleTTS = async () => {
                 if (isReadingAloud) { 
-                    audioPlayerRef.current.pause(); 
+                    if (queuePlayerRef.current) {
+                        queuePlayerRef.current.pause();
+                    }
                     setIsReadingAloud(false); 
                     setLoadingAudio(false); 
                     return; 
                 }
                 
                 setLoadingAudio(true);
+                setLoadingMessage("Extracting chapter text...");
                 
                 try {
                     // 1. Get full text of chapter
@@ -705,40 +1037,77 @@
                     const visibleText = getVisibleText();
                     let startIdx = 0;
                     if (visibleText && visibleText.length > 20) {
-                        // Sanitize for matching (remove newlines etc)
                         const searchStr = visibleText.substring(0, 50).replace(/\s+/g, ' ').trim();
-                        // Find this in chapter text (normalized)
-                        // Simple search first
                         startIdx = chapterText.indexOf(searchStr);
                         if (startIdx === -1) {
-                            // Fallback: Just read from start of chapter if match fails
                             startIdx = 0;
                         }
                     }
 
                     const remainingText = chapterText.substring(startIdx);
                     
-                    // 3. Chunk it
-                    const chunks = chunkText(remainingText);
+                    // 3. Format using Gemini 3.5 Flash
+                    setLoadingMessage("Directing narrative style...");
+                    // limit on-the-fly chunk to ~8k chars to prevent long generation delays
+                    const formattedScript = await callGeminiFormatText(remainingText.substring(0, 8000)); 
+                    
+                    const parts = formattedScript.split(/####?\s*TRANSCRIPT/i);
+                    const header = parts[0].trim();
+                    const transcript = parts[1] ? parts[1].trim() : formattedScript;
+                    
+                    // 4. Chunk it
+                    const chunks = chunkText(transcript, 850);
                     if (chunks.length === 0) {
                         alert("Text processing failed.");
                         setLoadingAudio(false);
                         return;
                     }
 
-                    // 4. Setup Queue
-                    ttsQueue.current = chunks;
-                    ttsIndex.current = 0;
-                    setIsReadingAloud(true);
+                    // 5. Setup Queue Player
+                    if (queuePlayerRef.current) {
+                        queuePlayerRef.current.destroy();
+                    }
                     
-                    // 5. Start
-                    playNextChunk();
+                    setLoadingMessage("Generating voice narration...");
+                    
+                    queuePlayerRef.current = new TTSQueuePlayer(
+                        chunks,
+                        header,
+                        (idx) => {
+                            setLoadingAudio(false);
+                        },
+                        (idx) => {
+                            // On chunk end
+                        },
+                        (err) => {
+                            setIsReadingAloud(false);
+                            setLoadingAudio(false);
+                            alert("Narrator error: " + err.message);
+                        },
+                        () => {
+                            setIsReadingAloud(false);
+                            setLoadingAudio(false);
+                        }
+                    );
+                    
+                    setIsReadingAloud(true);
+                    queuePlayerRef.current.play();
 
                 } catch (e) { 
                     alert("TTS Error: " + e.message); 
                     setIsReadingAloud(false); 
                     setLoadingAudio(false);
                 }
+            };
+
+            const handleOpenGenerator = async () => {
+                const text = await getCurrentChapterText();
+                if (!text || text.length < 10) {
+                    alert("No text available in this chapter to generate audio.");
+                    return;
+                }
+                setChapterTextForGen(text);
+                setShowGenerator(true);
             };
 
             const handleSlider = (e) => {
@@ -795,6 +1164,7 @@
                         <button onClick={onClose} className="font-serif text-sm font-semibold tracking-wide hover:opacity-75 transition">Close</button>
                         <div className="flex items-center gap-1.5">
                             <button onClick={handleTTS} className={`p-2 rounded-full transition ${isReadingAloud && !loadingAudio ? 'bg-brand-red text-white animate-pulse' : 'hover:bg-black/5'}`} title="AI Narrator"><Icon name="headphones" size={18} /></button>
+                            <button onClick={handleOpenGenerator} className="p-2 rounded-full hover:bg-black/5 transition" title="Generate & Save Audio Track"><Icon name="download" size={18} /></button>
                             <button onClick={handleSummary} className="p-2 rounded-full hover:bg-black/5 transition" title="Summarize"><Icon name="sparkles" size={18} /></button>
                             <div className={`w-px h-5 mx-1.5 ${settings.theme === 'dark' ? 'bg-white/10' : 'bg-black/10'}`}></div>
                             <button onClick={() => { setShowAppearance(!showAppearance); setShowTOC(false); }} className={`p-2 rounded-full hover:bg-black/5 transition ${showAppearance ? 'text-brand-red' : ''}`} title="Appearance"><Icon name="type" size={18} /></button>
@@ -850,7 +1220,7 @@
                         </div>
                     </div>
 
-                    {loadingAudio && <LoadingToast message={ttsIndex.current > 0 ? "Loading next part..." : "Generating Audio..."} onCancel={() => { setLoadingAudio(false); setIsReadingAloud(false); audioPlayerRef.current.pause(); }} />}
+                    {loadingAudio && <LoadingToast message={loadingMessage} onCancel={() => { setLoadingAudio(false); setIsReadingAloud(false); if(queuePlayerRef.current) queuePlayerRef.current.destroy(); }} />}
 
                     {showTOC && (
                         <div className="absolute inset-0 top-0 bottom-0 bg-black/60 backdrop-blur-xs z-30" onClick={() => setShowTOC(false)}>
@@ -986,6 +1356,17 @@
                         </div>
                     )}
                     {aiModal === 'summary' && <AIModal type="summary" content={summaryText} onClose={() => setAiModal(null)} />}
+                    {showGenerator && (
+                        <AIGeneratorModal 
+                            bookId={bookId} 
+                            chapterTitle={currentChapterTitle} 
+                            chapterText={chapterTextForGen} 
+                            onClose={() => setShowGenerator(false)} 
+                            onSave={() => {
+                                // Handled on reader close or when book is reloaded
+                            }} 
+                        />
+                    )}
                 </div>
             );
         };
@@ -1704,7 +2085,11 @@
                         </div>
                     )}
                     
-                    {showReader && <EpubReader bookId={bookId} onClose={() => setShowReader(false)} />}
+                    {showReader && <EpubReader bookId={bookId} onClose={async () => {
+                        setShowReader(false);
+                        const b = await dbOp('readonly', 'books', s => s.get(bookId));
+                        setBook(b);
+                    }} />}
                     
                     <audio 
                         ref={audioRef} 
@@ -1846,4 +2231,3 @@
     </script>
 </body>
 </html>
-
