@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="theme-color" content="#F2F2F7">
-    <title>Audiobook Manager</title>
+    <meta name="theme-color" content="#09080a">
+    <title>Folio Audiobook Manager</title>
     
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -18,6 +18,11 @@
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400;1,600&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
     <!-- Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
@@ -29,11 +34,19 @@
         tailwind.config = {
             theme: {
                 extend: {
-                    fontFamily: { sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'] },
+                    fontFamily: { 
+                        sans: ['"Plus Jakarta Sans"', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+                        serif: ['"Cormorant Garamond"', 'Georgia', 'serif']
+                    },
                     colors: {
+                        'brand-red': '#D9383A',
                         ios: { bg: '#F2F2F7', card: '#FFFFFF', blue: '#007AFF', red: '#FF3B30', gray: '#8E8E93', border: '#C6C6C8' }
                     },
-                    boxShadow: { 'ios': '0 2px 12px rgba(0,0,0,0.06)', 'ios-float': '0 8px 30px rgba(0,0,0,0.12)' },
+                    boxShadow: { 
+                        'ios': '0 2px 12px rgba(0,0,0,0.06)', 
+                        'ios-float': '0 8px 30px rgba(0,0,0,0.12)',
+                        'glass-shadow': '0 8px 32px 0 rgba(0, 0, 0, 0.37)'
+                    },
                     keyframes: {
                         shimmer: { '0%': { backgroundPosition: '-1000px 0' }, '100%': { backgroundPosition: '1000px 0' } },
                         slideUp: { '0%': { transform: 'translateY(100%)', opacity: 0 }, '100%': { transform: 'translateY(0)', opacity: 1 } }
@@ -51,18 +64,67 @@
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .safe-top { padding-top: max(env(safe-area-inset-top), 20px); }
         .safe-bottom { padding-bottom: max(env(safe-area-inset-bottom), 20px); }
-        input[type=range] { -webkit-appearance: none; background: transparent; }
+        
+        /* Sleek custom slider styling for dark mode */
+        input[type=range] { -webkit-appearance: none; background: transparent; width: 100%; cursor: pointer; }
+        input[type=range]:focus { outline: none; }
         input[type=range]::-webkit-slider-thumb {
-            -webkit-appearance: none; height: 24px; width: 24px; border-radius: 50%;
-            background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.3); margin-top: -10px;
+            -webkit-appearance: none; height: 12px; width: 12px; border-radius: 50%;
+            background: #D9383A; border: 1.5px solid #fff; box-shadow: 0 0 8px rgba(217, 56, 58, 0.5); margin-top: -4.5px;
+            transition: transform 0.15s ease;
+        }
+        input[type=range]::-webkit-slider-thumb:hover {
+            transform: scale(1.3);
         }
         input[type=range]::-webkit-slider-runnable-track {
-            width: 100%; height: 4px; background: rgba(0,0,0,0.1); border-radius: 2px;
+            width: 100%; height: 3px; background: rgba(255, 255, 255, 0.12); border-radius: 9999px;
         }
+        
+        /* Dynamic rules for slider in light reader mode */
+        .light-slider::-webkit-slider-thumb {
+            background: #D9383A !important;
+            border: 1.5px solid #1c1c1e !important;
+        }
+        .light-slider::-webkit-slider-runnable-track {
+            background: rgba(0, 0, 0, 0.08) !important;
+        }
+        
         select { -webkit-appearance: none; appearance: none; }
+        
+        /* Editorial & Ambient animations */
+        @keyframes float-slow-1 {
+            0%, 100% { transform: translate(0px, 0px) scale(1); }
+            50% { transform: translate(40px, 50px) scale(1.15); }
+        }
+        @keyframes float-slow-2 {
+            0%, 100% { transform: translate(0px, 0px) scale(1.1); }
+            50% { transform: translate(-50px, -30px) scale(0.85); }
+        }
+        .animate-float-1 { animation: float-slow-1 22s infinite ease-in-out; }
+        .animate-float-2 { animation: float-slow-2 26s infinite ease-in-out; }
+        
+        .book-sheen::after {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0) 50%, rgba(0,0,0,0.15) 100%);
+            pointer-events: none;
+            z-index: 15;
+        }
+        
+        .lit-drop-cap::first-letter {
+            font-family: 'Cormorant Garamond', Georgia, serif;
+            float: left;
+            font-size: 3.5rem;
+            line-height: 0.8;
+            padding-top: 4px;
+            padding-right: 8px;
+            font-weight: 700;
+            color: #D9383A;
+        }
     </style>
 </head>
-<body class="bg-ios-bg text-slate-900 h-screen w-screen overflow-hidden select-none">
+<body class="bg-[#09080a] text-gray-100 h-screen w-screen overflow-hidden select-none font-sans antialiased">
     <div id="root" class="h-full w-full"></div>
 
     <script type="text/babel">
@@ -235,25 +297,35 @@
         // --- COMPONENTS ---
 
         const LoadingToast = ({ message, onCancel }) => (
-            <div className="fixed bottom-24 left-1/2 transform -translate-x-1/2 z-[80] bg-black/80 backdrop-blur-md text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 animate-[slideUp_0.3s_ease-out] w-auto max-w-[90%]">
-                <div className="animate-spin rounded-full h-4 w-4 border-2 border-white/30 border-t-white"></div>
-                <span className="text-sm font-medium">{message}</span>
-                {onCancel && <button onClick={onCancel} className="ml-2 bg-white/20 hover:bg-white/30 rounded-full p-1"><Icon name="x" size={14} /></button>}
+            <div className="fixed bottom-24 left-1/2 transform -translate-x-1/2 z-[80] bg-[#121115]/95 border border-white/15 backdrop-blur-md text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 animate-[slideUp_0.3s_ease-out] w-auto max-w-[90%]">
+                <div className="animate-spin rounded-full h-3.5 w-3.5 border-2 border-white/30 border-t-brand-red"></div>
+                <span className="text-xs font-sans font-semibold tracking-wide">{message}</span>
+                {onCancel && (
+                    <button onClick={onCancel} className="ml-2 hover:text-brand-red rounded-full p-0.5 transition">
+                        <Icon name="x" size={12} />
+                    </button>
+                )}
             </div>
         );
 
         const SettingsModal = ({ onClose }) => {
             const [key, setKey] = useState(getEffectiveApiKey());
             return (
-                <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in">
-                    <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-2xl">
-                        <h3 className="text-xl font-bold mb-4">Settings</h3>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Google Gemini API Key</label>
-                        <input type="password" value={key} onChange={e => setKey(e.target.value)} placeholder="AIzaSy..." className="w-full p-3 border rounded-xl bg-gray-50 mb-4 font-mono text-sm" />
-                        <p className="text-xs text-gray-400 mb-6">Required for AI Narrator and Summarization features.</p>
+                <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in">
+                    <div className="bg-[#121115]/95 border border-white/10 text-gray-100 rounded-3xl w-full max-w-sm p-6 shadow-2xl">
+                        <h3 className="font-serif text-xl font-bold mb-4 text-center">Settings</h3>
+                        <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">Google Gemini API Key</label>
+                        <input 
+                            type="password" 
+                            value={key} 
+                            onChange={e => setKey(e.target.value)} 
+                            placeholder="AIzaSy..." 
+                            className="w-full p-3 bg-white/5 border border-white/10 focus:border-brand-red focus:ring-1 focus:ring-brand-red rounded-xl outline-none font-mono text-sm text-white mb-3" 
+                        />
+                        <p className="text-[11px] text-gray-400 mb-6 leading-relaxed font-serif italic text-center">Required to enable the AI Narrator and Chapter Summarization features.</p>
                         <div className="flex gap-3">
-                            <button onClick={onClose} className="flex-1 py-2 text-gray-600 font-medium">Cancel</button>
-                            <button onClick={() => { localStorage.setItem('gemini_api_key', key); onClose(); }} className="flex-1 py-2 bg-ios-blue text-white rounded-xl font-semibold">Save</button>
+                            <button onClick={onClose} className="flex-1 py-2.5 text-gray-400 hover:text-white font-sans text-xs font-bold uppercase tracking-widest border border-white/10 rounded-xl hover:bg-white/5 transition">Cancel</button>
+                            <button onClick={() => { localStorage.setItem('gemini_api_key', key); onClose(); }} className="flex-1 py-2.5 bg-brand-red hover:bg-[#be2f31] text-white font-sans text-xs font-bold uppercase tracking-widest rounded-xl shadow-lg transition">Save</button>
                         </div>
                     </div>
                 </div>
@@ -262,11 +334,25 @@
 
         const AIModal = ({ type, content, onClose }) => {
             return (
-                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-6 animate-in fade-in">
-                    <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[80vh]">
-                        <div className="p-4 border-b flex items-center gap-2"><Icon name={type === 'summary' ? 'sparkles' : 'mic'} className="text-ios-blue" /><h3 className="font-bold text-lg">{type === 'summary' ? 'Chapter Summary' : 'AI Narrator'}</h3></div>
-                        <div className="p-6 overflow-y-auto">{content ? <p className="leading-relaxed text-gray-800 whitespace-pre-wrap">{content}</p> : <div className="flex flex-col items-center justify-center py-8"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-ios-blue mb-4"></div><p className="text-gray-500 animate-pulse">Consulting the AI...</p></div>}</div>
-                        <div className="p-4 border-t bg-gray-50 rounded-b-2xl"><button onClick={onClose} className="w-full py-3 bg-white border border-gray-200 rounded-xl font-semibold text-gray-700 shadow-sm">Close</button></div>
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm p-6 animate-in fade-in">
+                    <div className="bg-[#121115]/95 border border-white/10 text-gray-100 rounded-3xl w-full max-w-lg shadow-2xl flex flex-col max-h-[80vh] overflow-hidden">
+                        <div className="p-4 border-b border-white/5 flex items-center gap-2">
+                            <Icon name={type === 'summary' ? 'sparkles' : 'mic'} className="text-brand-red" />
+                            <h3 className="font-serif font-bold text-lg">{type === 'summary' ? 'Chapter Summary' : 'AI Narrator'}</h3>
+                        </div>
+                        <div className="p-6 overflow-y-auto font-serif text-base leading-relaxed text-gray-300">
+                            {content ? (
+                                <p className="whitespace-pre-wrap">{content}</p>
+                            ) : (
+                                <div className="flex flex-col items-center justify-center py-12">
+                                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-red mb-4"></div>
+                                    <p className="text-gray-400 italic animate-pulse">Consulting the AI...</p>
+                                </div>
+                            )}
+                        </div>
+                        <div className="p-4 border-t border-white/5 bg-white/5">
+                            <button onClick={onClose} className="w-full py-3 bg-white/5 border border-white/10 hover:bg-white/10 rounded-xl font-sans text-xs font-bold uppercase tracking-widest text-white transition">Close</button>
+                        </div>
                     </div>
                 </div>
             );
@@ -294,6 +380,7 @@
             const ttsIndex = useRef(0);
 
             const fontOptions = [
+                { label: 'Cormorant Garamond (Literary)', value: '"Cormorant Garamond", Georgia, serif' },
                 { label: 'System UI', value: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' },
                 { label: 'Helvetica Neue', value: '"Helvetica Neue", Helvetica, Arial, sans-serif' },
                 { label: 'Verdana', value: 'Verdana, Geneva, sans-serif' },
@@ -309,15 +396,27 @@
                 return saved ? JSON.parse(saved) : {
                     theme: 'light',
                     fontSize: 100,
-                    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-                    lineHeight: 1.5,
+                    fontFamily: '"Cormorant Garamond", Georgia, serif',
+                    lineHeight: 1.6,
                     dialogueEnhance: false,
-                    textColor: '#000000'
+                    textColor: '#1c1917'
                 };
             });
 
             useEffect(() => { localStorage.setItem('reader_settings', JSON.stringify(settings)); }, [settings]);
-            const updateSetting = (key, value) => setSettings(prev => ({ ...prev, [key]: value }));
+            
+            const updateSetting = (key, value) => {
+                if (key === 'theme') {
+                    const textColors = {
+                        light: '#1C1917',
+                        sepia: '#433422',
+                        dark: '#E2E2E6'
+                    };
+                    setSettings(prev => ({ ...prev, theme: value, textColor: textColors[value] }));
+                } else {
+                    setSettings(prev => ({ ...prev, [key]: value }));
+                }
+            };
 
             useEffect(() => {
                 const init = async () => {
@@ -334,8 +433,19 @@
 
                     rend.hooks.content.register((contents) => {
                         const doc = contents.document;
+                        
+                        // Load Cormorant Google Fonts in the EPUB iframe
+                        const link = doc.createElement('link');
+                        link.rel = 'stylesheet';
+                        link.href = 'https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap';
+                        doc.head.appendChild(link);
+
                         const style = doc.createElement('style');
-                        style.textContent = `.dialogue-text { display: inline; color: inherit; }`; 
+                        style.textContent = `
+                            .dialogue-text { display: inline; color: inherit; }
+                            body { font-family: 'Cormorant Garamond', Georgia, serif; line-height: 1.6; }
+                            p { line-height: 1.7 !important; margin-bottom: 1.25em !important; text-align: justify; }
+                        `; 
                         doc.head.appendChild(style);
 
                         const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, null, false);
@@ -380,9 +490,9 @@
                         setToc(navigation.toc);
                     }
 
-                    rend.themes.register('light', { body: { background: '#fff' } });
-                    rend.themes.register('sepia', { body: { background: '#f6f1d1' } });
-                    rend.themes.register('dark', { body: { background: '#1c1c1e' } });
+                    rend.themes.register('light', { body: { background: '#FAF6EE', color: '#1C1917' } });
+                    rend.themes.register('sepia', { body: { background: '#F4ECD8', color: '#433422' } });
+                    rend.themes.register('dark', { body: { background: '#0F0E12', color: '#E2E2E6' } });
                     
                     rend.on('relocated', (location) => {
                         setProgress(Math.floor(location.start.percentage * 100));
@@ -599,53 +709,108 @@
             const nav = (dir) => { if(rendition) dir === 'next' ? rendition.next() : rendition.prev(); };
 
             return (
-                <div className={`fixed inset-0 z-50 flex flex-col ${settings.theme === 'dark' ? 'bg-[#1c1c1e] text-gray-200' : (settings.theme === 'sepia' ? 'bg-[#f6f1d1] text-[#5f4b32]' : 'bg-white text-gray-900')}`}>
-                    <div className={`h-14 border-b flex items-center justify-between px-4 safe-top z-20 ${settings.theme === 'dark' ? 'border-gray-800' : 'border-gray-200 bg-white/50 backdrop-blur'}`}>
-                        <button onClick={onClose} className="text-ios-blue font-semibold">Done</button>
-                        <div className="flex gap-2">
-                             <button onClick={handleTTS} className={`p-2 rounded-full ${isReadingAloud && !loadingAudio ? 'bg-ios-blue text-white animate-pulse' : 'hover:bg-black/5'}`} title="AI Narrator"><Icon name="headphones" size={20} /></button>
-                             <button onClick={handleSummary} className="p-2 rounded-full hover:bg-black/5" title="Summarize"><Icon name="sparkles" size={20} /></button>
-                            <div className="w-px h-6 bg-gray-300 mx-1"></div>
-                            <button onClick={() => { setShowAppearance(!showAppearance); setShowTOC(false); }} className="p-2 rounded-full hover:bg-black/5"><Icon name="type" size={20} /></button>
-                            <button onClick={() => { setShowTOC(!showTOC); setShowAppearance(false); }} className="p-2 rounded-full hover:bg-black/5"><Icon name="list" size={20} /></button>
+                <div className={`fixed inset-0 z-50 flex flex-col transition-colors duration-300 ${
+                    settings.theme === 'dark' ? 'bg-[#0F0E12] text-gray-200' : 
+                    (settings.theme === 'sepia' ? 'bg-[#F4ECD8] text-[#433422]' : 'bg-[#FAF6EE] text-[#1C1917]')
+                }`}>
+                    {/* Floating Top Header Bar */}
+                    <div className={`mx-4 mt-4 h-12 rounded-full border px-4 flex items-center justify-between shadow-xl z-20 transition-all duration-300 ${
+                        settings.theme === 'dark' ? 'bg-[#151419]/90 border-white/10 text-white shadow-black/40' : 
+                        (settings.theme === 'sepia' ? 'bg-[#ebdcb9]/95 border-[#5f4b32]/15 text-[#433422] shadow-[#433422]/10' : 'bg-white/95 border-black/10 text-gray-900')
+                    }`}>
+                        <button onClick={onClose} className="font-serif text-sm font-semibold tracking-wide hover:opacity-75 transition">Close</button>
+                        <div className="flex items-center gap-1.5">
+                            <button onClick={handleTTS} className={`p-2 rounded-full transition ${isReadingAloud && !loadingAudio ? 'bg-brand-red text-white animate-pulse' : 'hover:bg-black/5'}`} title="AI Narrator"><Icon name="headphones" size={18} /></button>
+                            <button onClick={handleSummary} className="p-2 rounded-full hover:bg-black/5 transition" title="Summarize"><Icon name="sparkles" size={18} /></button>
+                            <div className={`w-px h-5 mx-1.5 ${settings.theme === 'dark' ? 'bg-white/10' : 'bg-black/10'}`}></div>
+                            <button onClick={() => { setShowAppearance(!showAppearance); setShowTOC(false); }} className={`p-2 rounded-full hover:bg-black/5 transition ${showAppearance ? 'text-brand-red' : ''}`} title="Appearance"><Icon name="type" size={18} /></button>
+                            <button onClick={() => { setShowTOC(!showTOC); setShowAppearance(false); }} className={`p-2 rounded-full hover:bg-black/5 transition ${showTOC ? 'text-brand-red' : ''}`} title="Table of Contents"><Icon name="list" size={18} /></button>
                         </div>
                     </div>
 
-                    <div className="flex-1 relative overflow-hidden">
-                        {!ready && <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 z-10"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-ios-blue"></div><div className="text-xs opacity-50">Indexing Book...</div></div>}
+                    <div className="flex-1 relative overflow-hidden px-4 md:px-12 py-4">
+                        {!ready && (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 z-10">
+                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-red"></div>
+                                <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Indexing Book...</div>
+                            </div>
+                        )}
                         <div ref={viewerRef} className="w-full h-full"></div>
-                        <div className="absolute inset-y-0 left-0 w-20 z-0" onClick={() => nav('prev')}></div>
-                        <div className="absolute inset-y-0 right-0 w-20 z-0" onClick={() => nav('next')}></div>
+                        <div className="absolute inset-y-0 left-0 w-16 md:w-24 z-0 cursor-west-resize" onClick={() => nav('prev')}></div>
+                        <div className="absolute inset-y-0 right-0 w-16 md:w-24 z-0 cursor-east-resize" onClick={() => nav('next')}></div>
                     </div>
 
-                    <div className={`h-16 border-t px-6 flex flex-col justify-center safe-bottom z-20 ${settings.theme === 'dark' ? 'border-gray-800 bg-[#1c1c1e]' : 'border-gray-200 bg-white'}`}>
-                        <input type="range" min="0" max="100" step="1" value={progress} onChange={handleSlider} className="w-full h-1 bg-gray-300 rounded-full mb-1" />
-                        <div className="flex justify-between text-[10px] opacity-50 font-mono"><span>{progress}%</span><span>{book?.locations?.total || '...'} locs</span></div>
+                    {/* Floating Bottom Progress Bar */}
+                    <div className={`mx-4 mb-4 p-4 rounded-3xl border flex flex-col justify-center shadow-xl z-20 transition-all duration-300 ${
+                        settings.theme === 'dark' ? 'bg-[#151419]/90 border-white/10 text-white shadow-black/40' : 
+                        (settings.theme === 'sepia' ? 'bg-[#ebdcb9]/95 border-[#5f4b32]/15 text-[#433422] shadow-[#433422]/10' : 'bg-white/95 border-black/10 text-gray-900')
+                    }`}>
+                        <input 
+                            type="range" 
+                            min="0" max="100" step="1" 
+                            value={progress} 
+                            onChange={handleSlider} 
+                            className={`w-full h-1 mb-2 cursor-pointer ${settings.theme !== 'dark' ? 'light-slider' : ''}`} 
+                        />
+                        <div className="flex justify-between text-[9px] font-bold uppercase tracking-widest opacity-60">
+                            <span>{progress}% read</span>
+                            <span>{book?.locations?.total || '...'} locations</span>
+                        </div>
                     </div>
 
                     {loadingAudio && <LoadingToast message={ttsIndex.current > 0 ? "Loading next part..." : "Generating Audio..."} onCancel={() => { setLoadingAudio(false); setIsReadingAloud(false); audioPlayerRef.current.pause(); }} />}
 
                     {showTOC && (
-                        <div className="absolute inset-0 top-14 bottom-16 bg-black/50 backdrop-blur-sm z-30" onClick={() => setShowTOC(false)}>
-                            <div className={`absolute top-0 right-0 bottom-0 w-72 shadow-2xl overflow-y-auto animate-in slide-in-from-right flex flex-col ${settings.theme === 'dark' ? 'bg-[#2c2c2e]' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
-                                <div className="p-4 font-bold border-b border-gray-200/10 flex justify-between items-center">
+                        <div className="absolute inset-0 top-0 bottom-0 bg-black/60 backdrop-blur-xs z-30" onClick={() => setShowTOC(false)}>
+                            <div className={`absolute top-0 right-0 bottom-0 w-72 shadow-2xl overflow-y-auto animate-in slide-in-from-right flex flex-col transition-all duration-300 border-l ${
+                                settings.theme === 'dark' ? 'bg-[#151419]/95 border-white/10 text-white' : 
+                                (settings.theme === 'sepia' ? 'bg-[#ebdcb9]/95 border-[#5f4b32]/15 text-[#433422]' : 'bg-white/95 border-black/10 text-gray-900')
+                            }`} onClick={e => e.stopPropagation()}>
+                                <div className="p-4 font-serif text-lg font-bold border-b border-white/5 flex justify-between items-center">
                                     <span>Contents</span>
                                     <div className="flex gap-2">
-                                        <button onClick={() => isEditingTOC ? saveTOC() : setIsEditingTOC(true)} className={`text-xs px-2 py-1 rounded ${isEditingTOC ? 'bg-ios-blue text-white' : 'bg-gray-200 text-gray-800'}`}>{isEditingTOC ? "Done" : "Edit"}</button>
-                                        {!isEditingTOC && <button onClick={scanChapters} className="text-xs bg-gray-200 text-gray-800 px-2 py-1 rounded" disabled={scanning}>{scanning ? "Scanning..." : "Auto-Detect"}</button>}
+                                        <button 
+                                            onClick={() => isEditingTOC ? saveTOC() : setIsEditingTOC(true)} 
+                                            className={`text-[9px] uppercase tracking-wider px-2.5 py-1.5 rounded-full font-bold transition ${
+                                                isEditingTOC ? 'bg-brand-red text-white' : 'border border-current hover:bg-black/5'
+                                            }`}
+                                        >
+                                            {isEditingTOC ? "Done" : "Edit"}
+                                        </button>
+                                        {!isEditingTOC && (
+                                            <button 
+                                                onClick={scanChapters} 
+                                                className="text-[9px] uppercase tracking-wider border border-current hover:bg-black/5 px-2.5 py-1.5 rounded-full font-bold transition" 
+                                                disabled={scanning}
+                                            >
+                                                {scanning ? "Scanning..." : "Detect"}
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
                                 <div className="flex-1 overflow-y-auto">
                                     {toc.map((item, i) => (
-                                        <div key={i} className="p-3 border-b border-gray-200/10 text-sm hover:bg-white/10 flex items-center">
+                                        <div key={i} className="p-3.5 border-b border-white/5 text-sm hover:bg-black/5 flex items-center transition">
                                             {isEditingTOC ? (
-                                                <input type="text" value={item.label} onChange={(e) => updateTocItem(i, e.target.value)} className="w-full bg-transparent border-b border-gray-300 focus:outline-none focus:border-ios-blue py-1" />
+                                                <input 
+                                                    type="text" 
+                                                    value={item.label} 
+                                                    onChange={(e) => updateTocItem(i, e.target.value)} 
+                                                    className="w-full bg-transparent border-b border-current focus:outline-none py-1 text-sm font-sans" 
+                                                />
                                             ) : (
-                                                <div onClick={() => { rendition.display(item.href); setShowTOC(false); }} className="cursor-pointer w-full">{item.label}</div>
+                                                <div 
+                                                    onClick={() => { rendition.display(item.href); setShowTOC(false); }} 
+                                                    className="cursor-pointer w-full font-serif leading-snug hover:text-brand-red transition"
+                                                >
+                                                    {item.label}
+                                                </div>
                                             )}
                                         </div>
                                     ))}
-                                    {toc.length === 0 && !scanning && <div className="p-8 text-center text-gray-400 text-sm">No chapters found.<br/>Try Auto-Detect.</div>}
+                                    {toc.length === 0 && !scanning && (
+                                        <div className="p-8 text-center text-gray-500 text-sm font-serif italic">No chapters found.<br/>Try Auto-Detect.</div>
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -653,43 +818,81 @@
 
                     {showAppearance && (
                         <div className="absolute inset-0 z-30" onClick={() => setShowAppearance(false)}>
-                             <div className={`absolute top-16 right-4 w-72 rounded-xl shadow-2xl p-4 animate-in zoom-in-95 overflow-y-auto max-h-[80vh] ${settings.theme === 'dark' ? 'bg-[#2c2c2e] border border-gray-700' : 'bg-white border border-gray-200'}`} onClick={e => e.stopPropagation()}>
-                                 <div className="flex justify-between bg-gray-200/20 rounded-lg p-1 mb-4">
+                             <div className={`absolute top-18 right-4 w-72 rounded-3xl shadow-2xl p-5 animate-in zoom-in-95 overflow-y-auto max-h-[80vh] border transition-all duration-300 ${
+                                 settings.theme === 'dark' ? 'bg-[#151419]/95 border-white/10 text-white shadow-black/80' : 
+                                 (settings.theme === 'sepia' ? 'bg-[#ebdcb9]/95 border-[#5f4b32]/15 text-[#433422] shadow-[#433422]/20' : 'bg-white/95 border-black/10 text-gray-900 shadow-gray-400/20')
+                             }`} onClick={e => e.stopPropagation()}>
+                                 
+                                 {/* Dynamic Theme selection */}
+                                 <div className={`flex justify-between rounded-xl p-1 mb-4 ${settings.theme === 'dark' ? 'bg-white/5' : 'bg-black/5'}`}>
                                      {['light', 'sepia', 'dark'].map(t => (
-                                         <button key={t} onClick={() => updateSetting('theme', t)} className={`flex-1 py-2 rounded-md capitalize text-sm font-medium ${settings.theme === t ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-900'}`} style={settings.theme === t && t === 'dark' ? {background: '#555', color: 'white'} : {}}>{t}</button>
+                                         <button 
+                                             key={t} 
+                                             onClick={() => updateSetting('theme', t)} 
+                                             className={`flex-1 py-1.5 rounded-lg capitalize text-xs font-bold tracking-wider transition-all ${
+                                                 settings.theme === t 
+                                                     ? 'bg-brand-red text-white shadow-md' 
+                                                     : 'text-gray-400 hover:text-gray-600'
+                                             }`}
+                                         >
+                                             {t}
+                                         </button>
                                      ))}
                                  </div>
+                                 
                                  <div className="mb-4">
-                                     <div className="text-xs uppercase font-bold opacity-50 mb-1">Font</div>
-                                     <select value={settings.fontFamily} onChange={(e) => updateSetting('fontFamily', e.target.value)} className="w-full p-2 rounded-lg bg-gray-200/20 border-none text-sm">
-                                        {fontOptions.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+                                     <div className="text-[9px] uppercase font-bold tracking-widest opacity-60 mb-2">Font family</div>
+                                     <select 
+                                         value={settings.fontFamily} 
+                                         onChange={(e) => updateSetting('fontFamily', e.target.value)} 
+                                         className={`w-full p-2.5 rounded-xl border-none text-xs font-sans focus:ring-1 focus:ring-brand-red ${
+                                             settings.theme === 'dark' ? 'bg-white/5 text-white' : 'bg-black/5 text-gray-900'
+                                         }`}
+                                     >
+                                        {fontOptions.map(f => <option key={f.value} value={f.value} className={settings.theme === 'dark' ? 'bg-[#151419] text-white' : 'bg-white text-gray-900'}>{f.label}</option>)}
                                      </select>
                                  </div>
+                                 
                                  <div className="mb-4">
-                                     <div className="text-xs uppercase font-bold opacity-50 mb-2">Line Spacing</div>
-                                     <div className="flex bg-gray-200/20 rounded-lg p-1">
+                                     <div className="text-[9px] uppercase font-bold tracking-widest opacity-60 mb-2">Line Spacing</div>
+                                     <div className={`flex rounded-xl p-1 ${settings.theme === 'dark' ? 'bg-white/5' : 'bg-black/5'}`}>
                                          {[1.2, 1.5, 1.8].map((lh, i) => (
-                                             <button key={lh} onClick={() => updateSetting('lineHeight', lh)} className={`flex-1 py-1.5 rounded text-xs font-medium ${settings.lineHeight === lh ? 'bg-white shadow-sm' : ''}`}>{i === 0 ? 'Tight' : i === 1 ? 'Normal' : 'Wide'}</button>
+                                             <button 
+                                                 key={lh} 
+                                                 onClick={() => updateSetting('lineHeight', lh)} 
+                                                 className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition ${
+                                                     settings.lineHeight === lh ? 'bg-brand-red text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                                                 }`}
+                                             >
+                                                 {i === 0 ? 'Tight' : i === 1 ? 'Normal' : 'Wide'}
+                                             </button>
                                          ))}
                                      </div>
                                  </div>
+                                 
                                  <div className="flex items-center justify-between gap-4 mb-4">
-                                     <button onClick={() => updateSetting('fontSize', Math.max(50, settings.fontSize - 10))} className="p-2 border rounded-lg border-gray-200/20"><Icon name="minus" size={16} /></button>
-                                     <span className="text-sm font-mono w-12 text-center">{settings.fontSize}%</span>
-                                     <button onClick={() => updateSetting('fontSize', Math.min(200, settings.fontSize + 10))} className="p-2 border rounded-lg border-gray-200/20"><Icon name="plus" size={16} /></button>
+                                     <button onClick={() => updateSetting('fontSize', Math.max(50, settings.fontSize - 10))} className="p-2 border rounded-xl border-current hover:bg-black/5"><Icon name="minus" size={14} /></button>
+                                     <span className="text-xs font-bold font-mono text-center w-12">{settings.fontSize}%</span>
+                                     <button onClick={() => updateSetting('fontSize', Math.min(200, settings.fontSize + 10))} className="p-2 border rounded-xl border-current hover:bg-black/5"><Icon name="plus" size={14} /></button>
                                  </div>
+                                 
                                  <div className="mb-4">
-                                     <div className="text-xs uppercase font-bold opacity-50 mb-2">Text Color</div>
-                                     <input type="color" value={settings.textColor} onChange={(e) => updateSetting('textColor', e.target.value)} className="w-full h-8 rounded cursor-pointer" />
+                                     <div className="text-[9px] uppercase font-bold tracking-widest opacity-60 mb-2">Text Color</div>
+                                     <input type="color" value={settings.textColor} onChange={(e) => updateSetting('textColor', e.target.value)} className="w-full h-8 rounded-xl cursor-pointer bg-transparent border border-current p-0.5" />
                                  </div>
-                                 <div className="border-t border-gray-200/10 pt-3 flex items-center justify-between">
-                                     <span className="text-sm font-medium">Enhance Dialogue</span>
-                                     <button onClick={() => updateSetting('dialogueEnhance', !settings.dialogueEnhance)} className={`w-12 h-6 rounded-full transition-colors relative ${settings.dialogueEnhance ? 'bg-ios-blue' : 'bg-gray-300'}`}><div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-transform ${settings.dialogueEnhance ? 'left-[26px]' : 'left-0.5'}`}></div></button>
+                                 
+                                 <div className={`border-t pt-4 flex items-center justify-between ${settings.theme === 'dark' ? 'border-white/5' : 'border-black/5'}`}>
+                                     <span className="text-[9px] uppercase font-bold tracking-widest opacity-60">Enhance Dialogue</span>
+                                     <button 
+                                         onClick={() => updateSetting('dialogueEnhance', !settings.dialogueEnhance)} 
+                                         className={`w-11 h-6 rounded-full transition-colors relative ${settings.dialogueEnhance ? 'bg-brand-red' : 'bg-gray-300'}`}
+                                     >
+                                         <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-transform duration-200 ${settings.dialogueEnhance ? 'left-[24px]' : 'left-1'}`}></div>
+                                     </button>
                                  </div>
                              </div>
                         </div>
                     )}
-                    
                     {aiModal === 'summary' && <AIModal type="summary" content={summaryText} onClose={() => setAiModal(null)} />}
                 </div>
             );
@@ -862,65 +1065,108 @@
             return (
                 <>
                     <div 
-                        className="fixed inset-0 z-50 bg-black/30 backdrop-blur-xs animate-in fade-in duration-300"
+                        className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm animate-in fade-in duration-300"
                         onClick={onClose}
                     />
-                    <div className="fixed inset-x-0 bottom-0 top-[10%] md:top-[12%] max-w-lg md:mx-auto z-50 bg-ios-bg flex flex-col rounded-t-3xl shadow-ios-float animate-in slide-in-from-bottom duration-300 overflow-hidden">
-                        <div className="bg-white/90 backdrop-blur border-b border-ios-border px-4 py-4 flex justify-between items-center">
-                            <button onClick={onClose} className="text-ios-blue font-medium">Cancel</button>
-                            <span className="font-semibold">{bookId ? "Edit Book" : "New Book"}</span>
-                            <button onClick={handleSave} className="text-ios-blue font-bold">Save</button>
+                    <div className="fixed inset-x-0 bottom-0 top-[8%] md:top-[10%] md:bottom-[8%] max-w-lg md:mx-auto z-50 bg-[#121115]/95 border border-white/10 flex flex-col rounded-t-3xl md:rounded-3xl shadow-2xl animate-in slide-in-from-bottom duration-300 overflow-hidden text-gray-100">
+                        <div className="bg-white/5 backdrop-blur border-b border-white/10 px-6 py-4 flex justify-between items-center">
+                            <button onClick={onClose} className="text-gray-400 hover:text-white font-sans text-xs uppercase tracking-widest font-bold transition">Cancel</button>
+                            <span className="font-serif text-lg font-bold tracking-wide">{bookId ? "Edit Book Portfolio" : "New Book Portfolio"}</span>
+                            <button onClick={handleSave} className="text-brand-red hover:text-[#ff4a4d] font-sans text-xs uppercase tracking-widest font-bold transition">Save</button>
                         </div>
 
-                    <div className="flex-1 overflow-y-auto p-4 pb-20 safe-bottom">
+                    <div className="flex-1 overflow-y-auto p-6 pb-20 safe-bottom no-scrollbar">
                         <div className="flex gap-4 mb-6">
-                            <div className="w-28 h-28 bg-gray-200 rounded-lg flex-shrink-0 relative overflow-hidden group shadow-sm">
-                                {coverPreview ? <img src={coverPreview} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-gray-400"><Icon name="image" /></div>}
-                                <label className="absolute inset-0 bg-black/20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition cursor-pointer">
-                                    <span className="text-white text-xs font-bold bg-black/50 px-2 py-1 rounded">Edit</span>
+                            <div className="w-28 h-28 bg-[#18171c] rounded-lg flex-shrink-0 relative overflow-hidden group shadow-md border border-white/5">
+                                {coverPreview ? <img src={coverPreview} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-gray-500"><Icon name="image" size={28} /></div>}
+                                <label className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition cursor-pointer">
+                                    <span className="text-white text-[10px] font-bold uppercase tracking-widest bg-brand-red px-2.5 py-1.5 rounded-full">Upload</span>
                                     <input type="file" accept="image/*" className="hidden" onChange={handleCoverUpload} />
                                 </label>
                             </div>
-                            <div className="flex-1 space-y-3">
-                                <input type="text" placeholder="Title" value={title} onChange={e => setTitle(e.target.value)} className="w-full bg-white p-2 rounded-lg border border-gray-200 text-lg font-semibold" />
-                                <input type="text" placeholder="Author" value={author} onChange={e => setAuthor(e.target.value)} className="w-full bg-white p-2 rounded-lg border border-gray-200 text-gray-600" />
+                            <div className="flex-1 flex flex-col justify-between py-1">
+                                <input 
+                                    type="text" 
+                                    placeholder="Book Title" 
+                                    value={title} 
+                                    onChange={e => setTitle(e.target.value)} 
+                                    className="w-full bg-white/5 p-2.5 rounded-xl border border-white/10 focus:border-brand-red focus:ring-1 focus:ring-brand-red text-white text-lg font-serif font-semibold outline-none transition" 
+                                />
+                                <input 
+                                    type="text" 
+                                    placeholder="Author" 
+                                    value={author} 
+                                    onChange={e => setAuthor(e.target.value)} 
+                                    className="w-full bg-white/5 p-2.5 rounded-xl border border-white/10 focus:border-brand-red focus:ring-1 focus:ring-brand-red text-white text-sm outline-none transition" 
+                                />
                             </div>
                         </div>
 
-                        <div className="bg-white rounded-xl shadow-sm p-4 mb-6 flex items-center justify-between">
+                        <div className="bg-white/5 border border-white/10 rounded-2xl p-4 mb-6 flex items-center justify-between">
                             <div className="flex items-center gap-3">
-                                <div className={`p-2 rounded-lg ${epubId ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400'}`}><Icon name="book" size={20} /></div>
-                                <div><h4 className="font-medium">E-Book File</h4><p className="text-xs text-gray-500">{epubId ? "EPUB Loaded" : "No EPUB uploaded"}</p></div>
+                                <div className={`p-3 rounded-xl ${epubId ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-white/5 text-gray-500 border border-white/5'}`}>
+                                    <Icon name="book" size={18} />
+                                </div>
+                                <div>
+                                    <h4 className="font-serif text-sm font-semibold">Manuscript (EPUB)</h4>
+                                    <p className="text-xs text-gray-400">{epubId ? "EPUB Loaded successfully" : "No manuscript uploaded"}</p>
+                                </div>
                             </div>
-                            <label className="text-sm font-medium text-ios-blue cursor-pointer bg-blue-50 px-3 py-1.5 rounded-full">{epubId ? "Change" : "Upload"}
+                            <label className="text-[10px] font-bold uppercase tracking-wider text-white bg-white/10 hover:bg-white/15 border border-white/10 hover:border-white/20 cursor-pointer px-4 py-2.5 rounded-full transition">
+                                {epubId ? "Change" : "Upload"}
                                 <input type="file" accept=".epub,application/epub+zip" className="hidden" onChange={handleEpubUpload} />
                             </label>
                         </div>
 
-                        <div className="mb-2 flex items-center justify-between px-1">
-                            <h3 className="font-bold text-gray-500 uppercase tracking-wide text-xs">Audio Tracks ({tracks.length})</h3>
-                            <div className="flex gap-2">
-                                <button onClick={shuffleTracks} className="text-ios-blue text-xs font-medium">Shuffle</button>
-                                <button onClick={sortTracks} className="text-ios-blue text-xs font-medium">Sort by Name</button>
+                        <div className="mb-3 flex items-center justify-between px-1">
+                            <h3 className="font-sans text-[10px] font-bold text-gray-400 uppercase tracking-widest">Audio Tracks ({tracks.length})</h3>
+                            <div className="flex gap-3">
+                                <button onClick={shuffleTracks} className="text-gray-400 hover:text-white text-[10px] font-bold uppercase tracking-wider transition">Shuffle</button>
+                                <button onClick={sortTracks} className="text-gray-400 hover:text-white text-[10px] font-bold uppercase tracking-wider transition">Sort</button>
                             </div>
                         </div>
 
-                        <div className="bg-white rounded-xl shadow-sm overflow-hidden mb-6">
-                            {tracks.length === 0 ? <div className="p-6 text-center text-gray-400 text-sm">No tracks yet.</div> : (
-                                <div className="divide-y divide-gray-100">
+                        <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden mb-6">
+                            {tracks.length === 0 ? (
+                                <div className="p-8 text-center text-gray-500 text-sm font-serif italic">No audio narratives loaded.</div>
+                            ) : (
+                                <div className="divide-y divide-white/5 max-h-[300px] overflow-y-auto no-scrollbar">
                                     {tracks.map((t, idx) => (
-                                        <div key={idx} className="p-3 flex items-center gap-3">
-                                            <span className="text-gray-400 text-xs font-mono w-5">{idx + 1}</span>
-                                            <div className="flex-1 min-w-0"><div className="truncate text-sm text-gray-800 font-medium">{t.name}</div><div className="text-xs text-gray-400">{t.start > 0 ? `Start: ${formatTime(t.start)}` : 'Full File'}{t.duration && ` • ${formatTime(t.duration)}`}</div></div>
-                                            {(!t.duration || t.duration > 120) && <button onClick={() => openSplitMenu(idx)} className="text-gray-400 bg-gray-50 p-2 rounded-full hover:bg-ios-blue hover:text-white transition"><Icon name="scissors" size={16} /></button>}
-                                            <button onClick={() => removeTrack(idx)} className="text-red-400 p-2 rounded-full hover:bg-red-50"><Icon name="minus-circle" size={16} /></button>
+                                        <div key={idx} className="p-3.5 flex items-center gap-3 hover:bg-white/5 transition">
+                                            <span className="text-gray-500 text-xs font-mono w-5">{idx + 1}</span>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="truncate text-sm font-sans font-semibold text-gray-200">{t.name}</div>
+                                                <div className="text-[10px] text-gray-400 uppercase tracking-wider font-bold mt-0.5">{t.start > 0 ? `Start: ${formatTime(t.start)}` : 'Full File'}{t.duration && ` • ${formatTime(t.duration)}`}</div>
+                                            </div>
+                                            {(!t.duration || t.duration > 120) && (
+                                                <button 
+                                                    onClick={() => openSplitMenu(idx)} 
+                                                    className="text-gray-400 hover:text-brand-red hover:bg-white/10 p-2 rounded-full transition"
+                                                    title="Split Track"
+                                                >
+                                                    <Icon name="scissors" size={14} />
+                                                </button>
+                                            )}
+                                            <button 
+                                                onClick={() => removeTrack(idx)} 
+                                                className="text-gray-500 hover:text-brand-red hover:bg-white/10 p-2 rounded-full transition"
+                                                title="Remove Track"
+                                            >
+                                                <Icon name="minus-circle" size={14} />
+                                            </button>
                                         </div>
                                     ))}
                                 </div>
                             )}
-                            <div className="p-3 bg-gray-50 border-t border-gray-100">
-                                {processing ? <div className="flex flex-col items-center justify-center py-2 gap-2"><div className="animate-spin rounded-full h-5 w-5 border-b-2 border-ios-blue"></div><div className="text-xs text-gray-500">{status}</div></div> : (
-                                    <label className="flex items-center justify-center gap-2 text-ios-blue font-semibold cursor-pointer w-full py-2"><Icon name="plus-circle" size={20} /> Add Audio Files
+                            <div className="p-3 bg-white/5 border-t border-white/10">
+                                {processing ? (
+                                    <div className="flex flex-col items-center justify-center py-2 gap-2">
+                                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-brand-red"></div>
+                                        <div className="text-xs text-gray-400 font-serif italic">{status}</div>
+                                    </div>
+                                ) : (
+                                    <label className="flex items-center justify-center gap-2 text-white hover:text-brand-red font-sans text-xs font-bold uppercase tracking-widest cursor-pointer w-full py-2.5 hover:bg-white/5 rounded-xl transition">
+                                        <Icon name="plus-circle" size={16} /> Add Audio Files
                                         <input type="file" multiple accept=".mp3,.wav,.m4a,audio/*" className="hidden" onChange={handleAddTracks} />
                                     </label>
                                 )}
@@ -928,27 +1174,27 @@
                         </div>
 
                         {bookId && (
-                            <div className="mt-8 mb-4 px-2">
+                            <div className="mt-8 mb-4">
                                 {!showDeleteConfirm ? (
                                     <button 
                                         onClick={() => setShowDeleteConfirm(true)} 
-                                        className="w-full py-3.5 rounded-xl bg-red-50 text-red-500 font-semibold text-sm border border-red-100 hover:bg-red-100 transition-colors"
+                                        className="w-full py-3.5 rounded-xl bg-brand-red/10 border border-brand-red/20 text-brand-red hover:bg-brand-red/20 hover:border-brand-red/30 font-sans text-xs font-bold uppercase tracking-widest transition-colors duration-200"
                                     >
-                                        Delete Book
+                                        Delete Book Portfolio
                                     </button>
                                 ) : (
-                                    <div className="bg-red-50 rounded-xl p-4 border border-red-100 animate-in fade-in slide-in-from-bottom-2">
-                                        <p className="text-center text-red-800 font-medium mb-3 text-sm">Are you sure? This action cannot be undone.</p>
+                                    <div className="bg-brand-red/10 border border-brand-red/20 rounded-2xl p-4 animate-in fade-in slide-in-from-bottom-2">
+                                        <p className="text-center text-brand-red font-serif italic mb-3 text-sm">Are you sure? This action cannot be undone.</p>
                                         <div className="flex gap-3">
                                             <button 
                                                 onClick={() => setShowDeleteConfirm(false)} 
-                                                className="flex-1 py-3 rounded-lg bg-white text-gray-700 font-semibold text-sm border border-gray-200"
+                                                className="flex-1 py-2.5 rounded-xl bg-white/5 border border-white/10 text-gray-300 font-sans text-xs font-bold uppercase tracking-widest hover:bg-white/10 transition"
                                             >
                                                 Cancel
                                             </button>
                                             <button 
                                                 onClick={handleDeleteBook} 
-                                                className="flex-1 py-3 rounded-lg bg-red-500 text-white font-semibold text-sm shadow-md"
+                                                className="flex-1 py-2.5 rounded-xl bg-brand-red hover:bg-[#be2f31] text-white font-sans text-xs font-bold uppercase tracking-widest shadow-lg transition"
                                             >
                                                 Confirm Delete
                                             </button>
@@ -1061,27 +1307,58 @@
             const sliderVal = time - trackStart;
             
             return (
-                <div className="h-full flex flex-col bg-ios-bg">
-                    <div className="safe-top px-4 pt-4 flex justify-between items-center z-10">
-                        <button onClick={onBack} className="p-2 text-gray-500"><Icon name="chevron-down" /></button>
-                        <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Now Playing</span>
-                        <button onClick={() => setShowList(true)} className="p-2 text-gray-500"><Icon name="list" /></button>
+                <div className="relative h-full flex flex-col bg-[#09080a] overflow-hidden text-gray-100">
+                    
+                    {/* Blurry Atmospheric Cover Art Backdrop */}
+                    <div className="absolute inset-0 pointer-events-none transition-opacity duration-1000 overflow-hidden z-0">
+                        {cover ? (
+                            <img src={cover} className="w-full h-full object-cover filter blur-[100px] opacity-25 scale-110" />
+                        ) : (
+                            <div className="w-full h-full bg-gradient-to-tr from-[#1b1220] via-[#0d0d12] to-[#121c25]"></div>
+                        )}
                     </div>
 
-                    <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-8">
-                        <div className={`w-full max-w-xs aspect-square rounded-2xl shadow-ios-float overflow-hidden bg-gray-200 transform transition-transform duration-500 ${playing ? 'scale-105' : 'scale-100'}`}>
-                            {cover ? <img src={cover} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-gray-400"><Icon name="music" size={64} /></div>}
+                    {/* Glass Header */}
+                    <div className="safe-top px-6 pt-4 pb-2 flex justify-between items-center z-10 bg-black/10 backdrop-blur-xs border-b border-white/5">
+                        <button onClick={onBack} className="p-2.5 text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-full transition active:scale-90 shadow-lg">
+                            <Icon name="chevron-down" size={16} />
+                        </button>
+                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-[0.25em] font-sans">Now Narrating</span>
+                        <button onClick={() => setShowList(true)} className="p-2.5 text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-full transition active:scale-90 shadow-lg">
+                            <Icon name="list" size={16} />
+                        </button>
+                    </div>
+
+                    {/* Center Column Container */}
+                    <div className="flex-1 flex flex-col items-center justify-center p-6 md:p-8 space-y-6 md:space-y-8 z-10">
+                        
+                        {/* Immersive Book Cover Art Card */}
+                        <div className={`aspect-[3/4] max-w-[240px] md:max-w-[270px] w-full rounded-2xl overflow-hidden relative shadow-[0_24px_50px_rgba(0,0,0,0.7)] border border-white/10 transition-all duration-500 ease-out book-sheen ${
+                            playing ? 'scale-[1.03] shadow-[0_30px_60px_rgba(0,0,0,0.8)]' : 'scale-95'
+                        }`}>
+                            {/* Left spine shadow overlay */}
+                            <div className="absolute left-0 top-0 bottom-0 w-3 bg-black/35 z-20 border-r border-white/5 shadow-[2px_0_5px_rgba(0,0,0,0.4)]"></div>
+                            {cover ? (
+                                <img src={cover} className="w-full h-full object-cover relative z-10" />
+                            ) : (
+                                <div className="w-full h-full flex flex-col items-center justify-center bg-[#1c1b22] text-gray-500 relative z-10 p-4">
+                                    <Icon name="book" size={48} className="opacity-30 mb-2" />
+                                    <span className="font-serif text-sm text-center opacity-50 px-2 line-clamp-3">{book.title}</span>
+                                </div>
+                            )}
                         </div>
 
-                        <div className="text-center w-full max-w-sm">
-                            <h2 className="text-2xl font-bold truncate px-4">{book.title}</h2>
-                            <p className="text-gray-500">{book.author}</p>
-                            <div className="bg-blue-100 text-ios-blue text-xs font-bold px-3 py-1 rounded-full inline-block mt-2 truncate max-w-full">
-                                {currentTrack?.name || "No Track"}
+                        {/* Literary Meta Data */}
+                        <div className="text-center w-full max-w-sm px-4">
+                            <h2 className="font-serif text-2xl md:text-3xl font-bold truncate text-white leading-tight">{book.title}</h2>
+                            <p className="font-sans text-[11px] font-bold text-gray-400 uppercase tracking-[0.2em] mt-1.5">{book.author}</p>
+                            <div className="border border-white/10 bg-white/5 text-gray-300 text-xs font-semibold px-4 py-2 rounded-full inline-block mt-4 truncate max-w-full font-sans tracking-wide">
+                                {currentTrack?.name || "No audio narrative loaded"}
                             </div>
                         </div>
 
-                        <div className="w-full max-w-sm px-4">
+                        {/* Range Slider Container */}
+                        <div className="w-full max-w-sm px-6">
                             <input 
                                 type="range" 
                                 min="0" max={trackDur || 1} 
@@ -1091,44 +1368,60 @@
                                     audioRef.current.currentTime = seekTime; 
                                     setTime(seekTime); 
                                 }}
-                                className="w-full h-1 bg-gray-300 rounded-full"
+                                className="w-full"
                             />
-                            <div className="flex justify-between text-xs text-gray-400 mt-2 font-mono">
+                            <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest text-gray-400 mt-2.5 font-mono">
                                 <span>{formatTime(sliderVal)}</span>
                                 <span>-{formatTime(trackDur - sliderVal)}</span>
                             </div>
                         </div>
 
-                        <div className="flex items-center justify-between w-full max-w-xs px-6">
-                            <button onClick={() => audioRef.current.currentTime -= 30} className="text-gray-800 flex flex-col items-center gap-1">
-                                <Icon name="rotate-ccw" size={32} /> <span className="text-[10px] font-bold">30</span>
+                        {/* Player controls */}
+                        <div className="flex items-center justify-between w-full max-w-xs px-8">
+                            <button onClick={() => audioRef.current.currentTime -= 30} className="text-gray-400 hover:text-white transition flex flex-col items-center gap-1.5 active:scale-95">
+                                <Icon name="rotate-ccw" size={24} /> 
+                                <span className="text-[9px] font-bold uppercase tracking-wider opacity-60">30s</span>
                             </button>
-                            <button onClick={() => { if(playing) audioRef.current.pause(); else audioRef.current.play(); setPlaying(!playing); }} className="w-20 h-20 bg-slate-900 text-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition">
-                                <Icon name={playing ? "pause" : "play"} size={36} className="ml-1 fill-current" />
+                            <button 
+                                onClick={() => { if(playing) audioRef.current.pause(); else audioRef.current.play(); setPlaying(!playing); }} 
+                                className="w-18 h-18 bg-brand-red hover:bg-[#be2f31] text-white rounded-full flex items-center justify-center shadow-[0_0_25px_rgba(219,56,58,0.4)] hover:shadow-[0_0_35px_rgba(219,56,58,0.6)] hover:scale-105 active:scale-95 transition-all duration-300 ease-out"
+                            >
+                                <Icon name={playing ? "pause" : "play"} size={26} className={playing ? "" : "ml-1"} />
                             </button>
-                            <button onClick={() => audioRef.current.currentTime += 300} className="text-gray-800 flex flex-col items-center gap-1">
-                                <Icon name="rotate-cw" size={32} /> <span className="text-[10px] font-bold">5m</span>
+                            <button onClick={() => audioRef.current.currentTime += 300} className="text-gray-400 hover:text-white transition flex flex-col items-center gap-1.5 active:scale-95">
+                                <Icon name="rotate-cw" size={24} /> 
+                                <span className="text-[9px] font-bold uppercase tracking-wider opacity-60">5m</span>
                             </button>
                         </div>
                     </div>
 
+                    {/* Immersive Read Along Button Panel */}
                     {book.epubId && (
-                        <div className="safe-bottom pb-8 flex justify-center">
-                             <button onClick={() => setShowReader(true)} className="flex items-center gap-2 bg-white px-5 py-3 rounded-full shadow-md text-sm font-bold text-gray-800">
-                                <Icon name="book-open" size={18} /> Read Along
+                        <div className="safe-bottom pb-8 flex justify-center z-10">
+                             <button onClick={() => setShowReader(true)} className="flex items-center gap-2.5 bg-white/10 hover:bg-white/15 border border-white/15 hover:border-white/20 px-6 py-3 rounded-full shadow-lg text-[10px] font-bold uppercase tracking-[0.2em] text-white hover:scale-[1.02] active:scale-95 transition-all duration-300 backdrop-blur">
+                                <Icon name="book-open" size={14} /> Read Along
                             </button>
                         </div>
                     )}
 
+                    {/* Chapters Drawer Modal */}
                     {showList && (
-                        <div className="absolute inset-0 z-20 bg-black/40 backdrop-blur-sm flex flex-col justify-end" onClick={() => setShowList(false)}>
-                            <div className="bg-white rounded-t-3xl h-2/3 flex flex-col p-4 animate-in slide-in-from-bottom" onClick={e => e.stopPropagation()}>
-                                <h3 className="text-lg font-bold mb-4 p-2">Chapters</h3>
-                                <div className="overflow-y-auto flex-1">
+                        <div className="absolute inset-0 z-20 bg-black/60 backdrop-blur-xs flex flex-col justify-end" onClick={() => setShowList(false)}>
+                            <div className="bg-[#121115]/95 border-t border-white/10 backdrop-blur-lg rounded-t-3xl max-h-[70vh] flex flex-col p-6 shadow-2xl w-full max-w-lg md:mx-auto animate-in slide-in-from-bottom duration-300" onClick={e => e.stopPropagation()}>
+                                <h3 className="font-serif text-xl font-bold border-b border-white/5 pb-3 text-white mb-4">Audio Narrations</h3>
+                                <div className="overflow-y-auto flex-1 no-scrollbar">
                                     {book.tracks.map((t, i) => (
-                                        <div key={i} onClick={() => { changeTrack(i); setShowList(false); }} className={`p-3 rounded-xl mb-1 flex items-center gap-3 ${i === book.currentTrackIndex ? 'bg-gray-100 text-ios-blue font-semibold' : 'text-gray-600'}`}>
-                                            <span className="text-xs text-gray-400 w-6">{i + 1}</span>
-                                            <span className="truncate">{t.name}</span>
+                                        <div 
+                                            key={i} 
+                                            onClick={() => { changeTrack(i); setShowList(false); }} 
+                                            className={`p-3.5 rounded-xl mb-1.5 flex items-center gap-3 transition cursor-pointer ${
+                                                i === book.currentTrackIndex 
+                                                    ? 'bg-brand-red text-white font-semibold shadow-md' 
+                                                    : 'text-gray-400 hover:bg-white/5 hover:text-white'
+                                            }`}
+                                        >
+                                            <span className="font-mono text-xs w-6 opacity-60">{i + 1}</span>
+                                            <span className="truncate text-sm font-sans font-semibold tracking-wide">{t.name}</span>
                                         </div>
                                     ))}
                                 </div>
@@ -1171,43 +1464,93 @@
             useEffect(() => { loadLibrary(); }, []);
 
             return (
-                <>
-                    {view === 'library' && (
-                        <div className="h-full bg-ios-bg p-6 safe-top overflow-y-auto">
-                            <header className="flex justify-between items-center mb-6">
-                                <h1 className="text-3xl font-bold tracking-tight">Library</h1>
-                                <div className="flex gap-2">
-                                    <button onClick={() => setShowSettings(true)} className="bg-white text-gray-600 rounded-full p-2 shadow-sm border active:scale-95 transition">
-                                        <Icon name="settings" size={20} />
-                                    </button>
-                                    <button onClick={() => { setEditingBookId(null); setIsEditing(true); }} className="bg-ios-blue text-white rounded-full p-2 shadow-lg active:scale-95 transition">
-                                        <Icon name="plus" size={20} />
-                                    </button>
-                                </div>
-                            </header>
+                <div className="relative h-full w-full bg-[#09080a] text-gray-100 overflow-hidden font-sans">
+                    
+                    {/* Animated Ambient Light Gradients */}
+                    <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
+                        <div className="absolute top-[-20%] left-[-10%] w-[60%] aspect-square rounded-full bg-[#3b1c2e]/20 blur-[130px] animate-float-1"></div>
+                        <div className="absolute bottom-[-10%] right-[-10%] w-[55%] aspect-square rounded-full bg-[#1b2b3a]/30 blur-[140px] animate-float-2"></div>
+                        <div className="absolute top-[30%] right-[15%] w-[35%] aspect-square rounded-full bg-brand-red/5 blur-[100px] animate-pulse"></div>
+                    </div>
+                    
+                    {/* Main Content viewport */}
+                    <div className="relative z-10 h-full w-full overflow-hidden">
+                        {view === 'library' && (
+                            <div className="h-full p-6 safe-top overflow-y-auto no-scrollbar relative">
+                                <header className="flex justify-between items-end mb-10 border-b border-white/5 pb-4">
+                                    <div>
+                                        <h1 className="font-serif text-3xl md:text-4xl font-bold tracking-tight text-white">THE FOLIO</h1>
+                                        <p className="font-sans text-[10px] uppercase tracking-[0.25em] text-gray-400 mt-1 font-semibold">Audiobook Atelier</p>
+                                    </div>
+                                    <div className="flex gap-3">
+                                        <button 
+                                            onClick={() => setShowSettings(true)} 
+                                            className="bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 text-gray-300 rounded-full p-2.5 shadow-lg transition duration-200 active:scale-95"
+                                            title="Settings"
+                                        >
+                                            <Icon name="settings" size={18} />
+                                        </button>
+                                        <button 
+                                            onClick={() => { setEditingBookId(null); setIsEditing(true); }} 
+                                            className="bg-brand-red text-white hover:bg-[#be2f31] hover:shadow-[0_0_15px_rgba(217,56,58,0.4)] rounded-full p-2.5 shadow-lg transition duration-200 active:scale-95"
+                                            title="Add New Book"
+                                        >
+                                            <Icon name="plus" size={18} />
+                                        </button>
+                                    </div>
+                                </header>
 
-                            <div className="grid grid-cols-2 gap-4 pb-20">
-                                {books.map(b => (
-                                    <div key={b.id} onClick={() => { setActiveBookId(b.id); setView('player'); }} className="relative group">
-                                        <div className="aspect-square bg-white rounded-xl shadow-ios overflow-hidden mb-2 relative">
-                                            {covers[b.id] ? <img src={covers[b.id]} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center bg-gray-100 text-gray-300"><Icon name="music" size={40} /></div>}
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-6 pb-24">
+                                    {books.map(b => (
+                                        <div key={b.id} onClick={() => { setActiveBookId(b.id); setView('player'); }} className="relative group cursor-pointer flex flex-col">
+                                            
+                                            {/* Physical Book Cover Card */}
+                                            <div className="aspect-[3/4] bg-neutral-900 rounded-lg shadow-[0_12px_24px_rgba(0,0,0,0.5)] border border-white/5 overflow-hidden relative group-hover:scale-[1.03] group-hover:shadow-[0_16px_32px_rgba(0,0,0,0.6)] group-hover:border-white/15 transition-all duration-300 ease-out book-sheen">
+                                                
+                                                {/* Spine fold hinge simulation */}
+                                                <div className="absolute left-0 top-0 bottom-0 w-2.5 bg-black/35 z-20 border-r border-white/5 shadow-[2px_0_5px_rgba(0,0,0,0.4)]"></div>
+                                                
+                                                {covers[b.id] ? (
+                                                    <img src={covers[b.id]} className="w-full h-full object-cover relative z-10" />
+                                                ) : (
+                                                    <div className="w-full h-full flex flex-col items-center justify-center bg-[#18171c] text-gray-500 relative z-10 p-4">
+                                                        <Icon name="book" size={32} className="opacity-40 mb-2" />
+                                                        <span className="font-serif text-xs text-center opacity-60 px-2 line-clamp-3 leading-tight">{b.title}</span>
+                                                    </div>
+                                                )}
+                                                
+                                                {/* Edit overlay action */}
+                                                <button 
+                                                    onClick={(e) => { e.stopPropagation(); setEditingBookId(b.id); setIsEditing(true); }}
+                                                    className="absolute top-3 right-3 bg-brand-red hover:bg-[#be2f31] text-white p-2 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-30 shadow-black/30"
+                                                    title="Edit Book"
+                                                >
+                                                    <Icon name="pencil" size={14} />
+                                                </button>
+                                            </div>
+                                            
+                                            <h3 className="font-serif text-base font-semibold text-gray-100 group-hover:text-brand-red transition-colors duration-200 truncate mt-3 leading-tight">{b.title}</h3>
+                                            <p className="font-sans text-[10px] font-bold text-gray-400 uppercase tracking-widest truncate mt-1">{b.author}</p>
+                                        </div>
+                                    ))}
+                                    {books.length === 0 && (
+                                        <div className="col-span-2 sm:col-span-3 md:col-span-4 flex flex-col items-center justify-center py-20 text-gray-500">
+                                            <Icon name="book-open" size={48} className="opacity-25 mb-4" />
+                                            <p className="font-serif text-lg italic mb-2">The shelves are empty.</p>
                                             <button 
-                                                onClick={(e) => { e.stopPropagation(); setEditingBookId(b.id); setIsEditing(true); }}
-                                                className="absolute top-2 right-2 bg-white/90 p-1.5 rounded-full shadow-sm opacity-0 group-hover:opacity-100 transition text-gray-700 hover:text-blue-600"
+                                                onClick={() => { setEditingBookId(null); setIsEditing(true); }}
+                                                className="font-sans text-xs uppercase tracking-widest text-brand-red font-bold hover:underline"
                                             >
-                                                <Icon name="pencil" size={16} />
+                                                Create your first book
                                             </button>
                                         </div>
-                                        <h3 className="font-semibold text-sm truncate leading-tight">{b.title}</h3>
-                                        <p className="text-xs text-gray-500 truncate">{b.author}</p>
-                                    </div>
-                                ))}
-                                {books.length === 0 && <div className="col-span-2 text-center text-gray-400 mt-20">Tap + to create a book</div>}
+                                    )}
+                                </div>
                             </div>
-                        </div>
-                    )}
+                        )}
 
-                    {view === 'player' && <Player bookId={activeBookId} onBack={() => setView('library')} />}
+                        {view === 'player' && <Player bookId={activeBookId} onBack={() => setView('library')} />}
+                    </div>
                     
                     {isEditing && (
                         <BookEditor 
@@ -1219,7 +1562,7 @@
                     )}
 
                     {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
-                </>
+                </div>
             );
         };
 
