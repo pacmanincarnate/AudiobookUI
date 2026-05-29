@@ -223,43 +223,115 @@
         const callGeminiTTS = async (text) => {
             const key = getEffectiveApiKey();
             if (!key) throw new Error("API Key missing");
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent?key=${key}`;
-            const payload = { contents: [{ parts: [{ text }] }], generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } } } };
-            const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-            if (!response.ok) {
-                const err = await response.json();
-                throw new Error(err.error?.message || "TTS API Error");
-            }
-            const data = await response.json();
-            const base64Audio = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-            if (!base64Audio) throw new Error("No audio returned");
             
-            const binaryString = window.atob(base64Audio);
-            const len = binaryString.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
-            return bytes; // returns raw PCM bytes
+            const models = ["gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts", "gemini-3.1-flash-tts-preview"];
+            let lastError = null;
+            
+            console.log(`[TTS] Initiating synthesis for text chunk (${text.length} chars): "${text.substring(0, 60)}..."`);
+            const startTime = performance.now();
+            
+            for (const model of models) {
+                try {
+                    console.log(`[TTS] Trying model ${model}...`);
+                    const modelStartTime = performance.now();
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+                    const payload = { 
+                        contents: [{ parts: [{ text }] }], 
+                        generationConfig: { 
+                            responseModalities: ["AUDIO"], 
+                            speechConfig: { 
+                                voiceConfig: { 
+                                    prebuiltVoiceConfig: { 
+                                        voiceName: "Kore" 
+                                    } 
+                                } 
+                            } 
+                        } 
+                    };
+                    const response = await fetch(url, { 
+                        method: "POST", 
+                        headers: { "Content-Type": "application/json" }, 
+                        body: JSON.stringify(payload) 
+                    });
+                    if (!response.ok) {
+                        const err = await response.json();
+                        throw new Error(err.error?.message || `TTS API Error for ${model}`);
+                    }
+                    const data = await response.json();
+                    const base64Audio = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+                    if (!base64Audio) throw new Error(`No audio returned from ${model}`);
+                    
+                    const binaryString = window.atob(base64Audio);
+                    const len = binaryString.length;
+                    const bytes = new Uint8Array(len);
+                    for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+                    
+                    const duration = ((performance.now() - modelStartTime) / 1000).toFixed(2);
+                    console.log(`[TTS] Synthesis SUCCESS with model ${model} in ${duration}s. Returned PCM size: ${bytes.byteLength} bytes.`);
+                    return bytes; // returns raw PCM bytes
+                } catch (err) {
+                    const duration = ((performance.now() - startTime) / 1000).toFixed(2);
+                    console.warn(`[TTS] Synthesis failed for ${model} after ${duration}s. Error:`, err);
+                    lastError = err;
+                }
+            }
+            console.error(`[TTS] Synthesis FAILED for all models in ${((performance.now() - startTime) / 1000).toFixed(2)}s.`);
+            throw lastError || new Error("TTS generation failed for all models");
         };
 
         const callGeminiSummary = async (text) => {
             const key = getEffectiveApiKey();
             if (!key) throw new Error("API Key missing");
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${key}`;
-            const payload = { contents: [{ parts: [{ text: "Summarize this chapter concisely:\n\n" + text.substring(0, 15000) }] }] };
-            const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-            if (!response.ok) throw new Error("Summary API Error");
-            const data = await response.json();
-            return data.candidates?.[0]?.content?.parts?.[0]?.text || "No summary generated.";
+            
+            const models = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"];
+            let lastError = null;
+            
+            console.log(`[Summary] Initiating chapter summary request (${text.length} chars)...`);
+            const startTime = performance.now();
+            
+            for (const model of models) {
+                try {
+                    console.log(`[Summary] Trying model ${model}...`);
+                    const modelStartTime = performance.now();
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+                    const payload = { contents: [{ parts: [{ text: "Summarize this chapter concisely:\n\n" + text.substring(0, 15000) }] }] };
+                    
+                    const response = await fetch(url, { 
+                        method: "POST", 
+                        headers: { "Content-Type": "application/json" }, 
+                        body: JSON.stringify(payload) 
+                    });
+                    if (!response.ok) {
+                        const err = await response.json();
+                        throw new Error(err.error?.message || `Summary API Error for ${model}`);
+                    }
+                    const data = await response.json();
+                    const result = data.candidates?.[0]?.content?.parts?.[0]?.text || "No summary generated.";
+                    
+                    const duration = ((performance.now() - modelStartTime) / 1000).toFixed(2);
+                    console.log(`[Summary] Summary SUCCESS with model ${model} in ${duration}s.`);
+                    return result;
+                } catch (err) {
+                    const duration = ((performance.now() - startTime) / 1000).toFixed(2);
+                    console.warn(`[Summary] Summary failed for ${model} after ${duration}s. Error:`, err);
+                    lastError = err;
+                }
+            }
+            console.error(`[Summary] Summary FAILED for all models in ${((performance.now() - startTime) / 1000).toFixed(2)}s.`);
+            throw lastError || new Error("Summary generation failed for all models");
         };
 
-        const callGeminiFormatText = async (text) => {
+        const callGeminiFormatText = async (text, narratorPrompt = "") => {
             const key = getEffectiveApiKey();
             if (!key) throw new Error("API Key missing");
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${key}`;
+            
+            const models = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"];
+            let lastError = null;
             
             const systemPrompt = `You are an expert audiobook director and script editor. 
 Your task is to format the following text excerpt from a book chapter to be read by the Google Gemini Native Audio Generation Text-to-Speech (TTS) model.
 You must analyze the mood, tone, genre, and characters of the text, and output a fully directed prompt in the exact format shown below.
+${narratorPrompt ? `\nCRITICAL NARRATOR REQUIREMENT: The user has specified this custom narrator instruction that you MUST strictly adhere to and implement in the AUDIO PROFILE and DIRECTOR'S NOTES: "${narratorPrompt}"\n` : ''}
 
 Follow these strict rules:
 1. Define a compelling, appropriate voice persona in the AUDIO PROFILE.
@@ -288,23 +360,49 @@ Accent: [Accent guidance]
 #### TRANSCRIPT
 [Your annotated transcript goes here]`;
 
-            const payload = {
-                contents: [
-                    { parts: [{ text: `${systemPrompt}\n\nHere is the text excerpt to format:\n\n${text}` }] }
-                ]
-            };
+            console.log(`[Format Text] Initiating formatting request for text segment (${text.length} chars)...`);
+            const startTime = performance.now();
             
-            const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-            if (!response.ok) {
-                const err = await response.json();
-                throw new Error(err.error?.message || "Text formatting API Error");
+            for (const model of models) {
+                try {
+                    console.log(`[Format Text] Trying model ${model}...`);
+                    const modelStartTime = performance.now();
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+                    const payload = {
+                        contents: [
+                            { parts: [{ text: `${systemPrompt}\n\nHere is the text excerpt to format:\n\n${text}` }] }
+                        ]
+                    };
+                    
+                    const response = await fetch(url, { 
+                        method: "POST", 
+                        headers: { "Content-Type": "application/json" }, 
+                        body: JSON.stringify(payload) 
+                    });
+                    if (!response.ok) {
+                        const err = await response.json();
+                        throw new Error(err.error?.message || `Formatting API Error for ${model}`);
+                    }
+                    const data = await response.json();
+                    const result = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+                    
+                    const duration = ((performance.now() - modelStartTime) / 1000).toFixed(2);
+                    console.log(`[Format Text] Formatting SUCCESS with model ${model} in ${duration}s.`);
+                    return result;
+                } catch (err) {
+                    const duration = ((performance.now() - startTime) / 1000).toFixed(2);
+                    console.warn(`[Format Text] Formatting failed for ${model} after ${duration}s. Error:`, err);
+                    lastError = err;
+                }
             }
-            const data = await response.json();
-            return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+            console.error(`[Format Text] Formatting FAILED for all models in ${((performance.now() - startTime) / 1000).toFixed(2)}s.`);
+            throw lastError || new Error("Text formatting failed for all models");
         };
 
         class TTSQueuePlayer {
-            constructor(chunks, header, onChunkStart, onChunkEnd, onError, onFinished) {
+            constructor(chunks, header, onChunkStart, onChunkEnd, onError, onFinished, unlockedAudioElement) {
+                console.log(`[TTS Queue] Initializing player with ${chunks.length} chunks.`);
+                chunks.forEach((c, idx) => console.log(`  Chunk ${idx}: "${c.substring(0, 60)}..." (${c.length} chars)`));
                 this.chunks = chunks;
                 this.header = header;
                 this.onChunkStart = onChunkStart;
@@ -314,10 +412,11 @@ Accent: [Accent guidance]
                 
                 this.currentIndex = 0;
                 this.isPlaying = false;
-                this.audioElement = new Audio();
+                this.audioElement = unlockedAudioElement || new Audio();
                 this.cache = {}; // index -> Promise of Uint8Array (PCM)
                 
                 this.audioElement.onended = () => {
+                    console.log(`[TTS Queue] Chunk ${this.currentIndex} audio ended.`);
                     if (this.onChunkEnd) this.onChunkEnd(this.currentIndex);
                     this.currentIndex++;
                     this.playNext();
@@ -325,17 +424,27 @@ Accent: [Accent guidance]
             }
             
             prefetch(index) {
-                if (index >= this.chunks.length || this.cache[index]) return;
+                if (index >= this.chunks.length) {
+                    console.log(`[TTS Queue] Prefetch: index ${index} out of bounds.`);
+                    return;
+                }
+                if (this.cache[index]) {
+                    console.log(`[TTS Queue] Prefetch: index ${index} already cached/fetching.`);
+                    return;
+                }
                 
+                console.log(`[TTS Queue] Prefetching chunk ${index}...`);
                 const chunkText = this.chunks[index];
                 const ttsPrompt = this.header ? `${this.header}\n\n#### TRANSCRIPT\n${chunkText}` : chunkText;
                 
                 this.cache[index] = (async () => {
+                    const startPrefetchTime = performance.now();
                     try {
                         const pcmBytes = await callGeminiTTS(ttsPrompt);
+                        console.log(`[TTS Queue] Prefetch chunk ${index} complete in ${((performance.now() - startPrefetchTime) / 1000).toFixed(2)}s.`);
                         return pcmBytes;
                     } catch (err) {
-                        console.error(`Error prefetching chunk ${index}`, err);
+                        console.error(`[TTS Queue] Prefetch chunk ${index} failed:`, err);
                         delete this.cache[index]; // Clear to allow retry
                         throw err;
                     }
@@ -343,17 +452,20 @@ Accent: [Accent guidance]
             }
             
             async play() {
+                console.log("[TTS Queue] Queue play() called.");
                 if (this.isPlaying) return;
                 this.isPlaying = true;
                 this.playNext();
             }
             
             pause() {
+                console.log("[TTS Queue] Queue pause() called.");
                 this.isPlaying = false;
                 this.audioElement.pause();
             }
             
             destroy() {
+                console.log("[TTS Queue] Queue destroy() called.");
                 this.pause();
                 this.audioElement.src = "";
                 this.audioElement.onended = null;
@@ -361,15 +473,20 @@ Accent: [Accent guidance]
             }
             
             async playNext() {
-                if (!this.isPlaying) return;
+                if (!this.isPlaying) {
+                    console.log("[TTS Queue] playNext: isPlaying is false, aborting.");
+                    return;
+                }
                 
                 if (this.currentIndex >= this.chunks.length) {
+                    console.log("[TTS Queue] Completed all chunks in queue.");
                     this.isPlaying = false;
                     if (this.onFinished) this.onFinished();
                     return;
                 }
                 
                 const idx = this.currentIndex;
+                console.log(`[TTS Queue] Processing playNext for chunk index ${idx} of ${this.chunks.length}.`);
                 if (this.onChunkStart) this.onChunkStart(idx);
                 
                 try {
@@ -378,16 +495,22 @@ Accent: [Accent guidance]
                     
                     // If current chunk isn't cached/prefetched, fetch it now
                     if (!this.cache[idx]) {
+                        console.log(`[TTS Queue] Current chunk ${idx} not in cache. Fetching immediately...`);
                         this.prefetch(idx);
                     }
                     
+                    const fetchStartTime = performance.now();
                     const pcmBytes = await this.cache[idx];
+                    console.log(`[TTS Queue] Got PCM bytes for chunk ${idx} in ${((performance.now() - fetchStartTime) / 1000).toFixed(2)}s. Converting to WAV...`);
                     const audioUrl = pcmToWavUrl(pcmBytes);
                     
+                    console.log(`[TTS Queue] Loading audio source URL for chunk ${idx}...`);
                     this.audioElement.src = audioUrl;
+                    console.log(`[TTS Queue] Playing audio for chunk ${idx}...`);
                     await this.audioElement.play();
+                    console.log(`[TTS Queue] Audio play() promise resolved for chunk ${idx}.`);
                 } catch (err) {
-                    console.error("Playback error in QueuePlayer", err);
+                    console.error(`[TTS Queue] Playback error in QueuePlayer for chunk ${idx}:`, err);
                     this.isPlaying = false;
                     if (this.onError) this.onError(err);
                 }
@@ -561,7 +684,9 @@ Accent: [Accent guidance]
             const startFormatting = async () => {
                 setStep('formatting');
                 try {
-                    const formatted = await callGeminiFormatText(chapterText);
+                    const bookMeta = await dbOp('readonly', 'books', s => s.get(bookId));
+                    const narratorPrompt = bookMeta?.narratorPrompt || "";
+                    const formatted = await callGeminiFormatText(chapterText, narratorPrompt);
                     const parts = formatted.split(/####?\s*TRANSCRIPT/i);
                     const header = parts[0].trim();
                     const transcript = parts[1] ? parts[1].trim() : formatted;
@@ -579,32 +704,43 @@ Accent: [Accent guidance]
             }, []);
             
             const startGeneration = async () => {
+                console.log("[AI Artisan] Starting offline audiobook mastering...");
                 setStep('generating');
                 try {
                     const chunks = chunkText(scriptData.transcript, 850);
+                    console.log(`[AI Artisan] Script split into ${chunks.length} chunks for mastering.`);
+                    chunks.forEach((c, idx) => console.log(`  Chunk ${idx}: "${c.substring(0, 60)}..." (${c.length} chars)`));
                     setTotalChunks(chunks.length);
                     const pcmChunks = [];
                     
+                    const totalStartTime = performance.now();
                     for (let i = 0; i < chunks.length; i++) {
+                        console.log(`[AI Artisan] Processing chunk ${i + 1}/${chunks.length}...`);
                         setCurrentChunk(i + 1);
                         setProgress(Math.floor((i / chunks.length) * 100));
                         
                         const ttsPrompt = scriptData.header ? `${scriptData.header}\n\n#### TRANSCRIPT\n${chunks[i]}` : chunks[i];
+                        const chunkStartTime = performance.now();
                         const pcmBytes = await callGeminiTTS(ttsPrompt);
+                        console.log(`[AI Artisan] Chunk ${i + 1} synthesized successfully in ${((performance.now() - chunkStartTime)/1000).toFixed(2)}s.`);
                         pcmChunks.push(pcmBytes);
                     }
                     
+                    console.log(`[AI Artisan] All ${chunks.length} chunks synthesized in ${((performance.now() - totalStartTime)/1000).toFixed(2)}s total.`);
                     setProgress(100);
                     setStep('saving');
                     
+                    console.log("[AI Artisan] Concatenating PCM arrays and mastering WAV file...");
                     const combinedPCM = concatUint8Arrays(pcmChunks);
                     const wavBuffer = pcmToWav(combinedPCM.buffer);
                     const blob = new Blob([wavBuffer], { type: 'audio/wav' });
                     const fileObj = new File([blob], `${chapterTitle || 'Chapter'}_AI_Generated.wav`, { type: 'audio/wav' });
                     const fileId = crypto.randomUUID();
                     
+                    console.log(`[AI Artisan] Saving WAV file (size: ${blob.size} bytes) to IndexedDB...`);
                     await saveFiles([{ id: fileId, data: fileObj, type: 'audio' }]);
                     
+                    console.log("[AI Artisan] Linking track metadata to book record...");
                     const bookMeta = await dbOp('readonly', 'books', s => s.get(bookId));
                     if (bookMeta) {
                         const tracks = bookMeta.tracks || [];
@@ -618,10 +754,11 @@ Accent: [Accent guidance]
                         await patchBook(bookId, { tracks: [...tracks, newTrack] });
                     }
                     
+                    console.log("[AI Artisan] Audiobook track mastered successfully!");
                     setStep('success');
                     if (onSave) onSave();
                 } catch (e) {
-                    console.error(e);
+                    console.error("[AI Artisan] Generation failed:", e);
                     setErrorMsg(e.message || "Failed to generate audio track.");
                     setStep('error');
                 }
@@ -726,6 +863,7 @@ Accent: [Accent guidance]
         const EpubReader = ({ bookId, onClose }) => {
             const viewerRef = useRef(null);
             const [book, setBook] = useState(null);
+            const [bookRecord, setBookRecord] = useState(null);
             const [rendition, setRendition] = useState(null);
             const [toc, setToc] = useState([]);
             const [progress, setProgress] = useState(0);
@@ -812,6 +950,7 @@ Accent: [Accent guidance]
                     if (!bookId) return;
                     const bookMeta = await dbOp('readonly', 'books', s => s.get(bookId));
                     if (!bookMeta || !bookMeta.epubId) return;
+                    setBookRecord(bookMeta);
                     const f = await dbOp('readonly', 'files', s => s.get(bookMeta.epubId));
                     if (!f) return;
                     
@@ -978,7 +1117,12 @@ Accent: [Accent guidance]
                 const visible = rendition.currentLocation();
                 if (!visible || !visible.start || !visible.end) return null;
                 try {
-                    const range = rendition.getRange(visible.start.cfi, visible.end.cfi);
+                    const startRange = rendition.getRange(visible.start.cfi);
+                    const endRange = rendition.getRange(visible.end.cfi);
+                    if (!startRange || !endRange) return null;
+                    const range = startRange.startContainer.ownerDocument.createRange();
+                    range.setStart(startRange.startContainer, startRange.startOffset);
+                    range.setEnd(endRange.endContainer, endRange.endOffset);
                     return range.toString();
                 } catch(e) {
                     console.log("Range Error", e);
@@ -1012,7 +1156,9 @@ Accent: [Accent guidance]
             };
 
             const handleTTS = async () => {
+                console.log("[Narrator Panel] AI Narrator button clicked. Current reading aloud status:", isReadingAloud);
                 if (isReadingAloud) { 
+                    console.log("[Narrator Panel] Stopping playback.");
                     if (queuePlayerRef.current) {
                         queuePlayerRef.current.pause();
                     }
@@ -1021,12 +1167,27 @@ Accent: [Accent guidance]
                     return; 
                 }
                 
+                // --- USER GESTURE ACTIVATION ---
+                // We must activate/unlock the Audio element immediately within the synchronous click handler 
+                // block, prior to any asynchronous calls (await), to prevent the browser from blocking playback.
+                console.log("[Narrator Panel] Activating audio element for user gesture...");
+                const tempAudio = new Audio();
+                try {
+                    // Load and play a tiny, silent 2-byte WAV file to register activity
+                    tempAudio.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAAA";
+                    tempAudio.play().catch(e => console.log("[Narrator Panel] Silent play caught/aborted (normal):", e));
+                } catch(e) {
+                    console.warn("[Narrator Panel] Audio pre-unlock gesture warning:", e);
+                }
+
+                console.log("[Narrator Panel] Starting playback sequence...");
                 setLoadingAudio(true);
                 setLoadingMessage("Extracting chapter text...");
                 
                 try {
                     // 1. Get full text of chapter
                     const chapterText = await getCurrentChapterText();
+                    console.log(`[Narrator Panel] Extracted chapter text (${chapterText ? chapterText.length : 0} characters).`);
                     if (!chapterText || chapterText.length < 10) {
                         alert("No text available to read.");
                         setLoadingAudio(false);
@@ -1035,28 +1196,37 @@ Accent: [Accent guidance]
 
                     // 2. Try to find where we are (visible text)
                     const visibleText = getVisibleText();
+                    console.log(`[Narrator Panel] Visible text on screen (${visibleText ? visibleText.length : 0} characters): "${visibleText ? visibleText.substring(0, 100).replace(/\s+/g, ' ') : ''}..."`);
                     let startIdx = 0;
                     if (visibleText && visibleText.length > 20) {
                         const searchStr = visibleText.substring(0, 50).replace(/\s+/g, ' ').trim();
                         startIdx = chapterText.indexOf(searchStr);
+                        console.log(`[Narrator Panel] Found scroll match for visible text at index: ${startIdx}`);
                         if (startIdx === -1) {
+                            console.log("[Narrator Panel] No exact scroll match in chapter text, reading from beginning of chapter.");
                             startIdx = 0;
                         }
                     }
 
                     const remainingText = chapterText.substring(startIdx);
+                    console.log(`[Narrator Panel] Text remaining to read: ${remainingText.length} characters.`);
                     
                     // 3. Format using Gemini 3.5 Flash
                     setLoadingMessage("Directing narrative style...");
-                    // limit on-the-fly chunk to ~8k chars to prevent long generation delays
-                    const formattedScript = await callGeminiFormatText(remainingText.substring(0, 8000)); 
+                    const scriptSegment = remainingText.substring(0, 8000);
+                    console.log(`[Narrator Panel] Formatting script segment (${scriptSegment.length} characters) via callGeminiFormatText...`);
+                    const narratorPrompt = bookRecord?.narratorPrompt || "";
+                    const formattedScript = await callGeminiFormatText(scriptSegment, narratorPrompt); 
+                    console.log("[Narrator Panel] Script successfully formatted by Gemini 3.5 Flash.");
                     
                     const parts = formattedScript.split(/####?\s*TRANSCRIPT/i);
                     const header = parts[0].trim();
                     const transcript = parts[1] ? parts[1].trim() : formattedScript;
+                    console.log(`[Narrator Panel] Split formatted script. Header length: ${header.length}, Transcript length: ${transcript.length}`);
                     
                     // 4. Chunk it
                     const chunks = chunkText(transcript, 850);
+                    console.log(`[Narrator Panel] Transcript chunked into ${chunks.length} chunks.`);
                     if (chunks.length === 0) {
                         alert("Text processing failed.");
                         setLoadingAudio(false);
@@ -1065,35 +1235,43 @@ Accent: [Accent guidance]
 
                     // 5. Setup Queue Player
                     if (queuePlayerRef.current) {
+                        console.log("[Narrator Panel] Destroying existing Queue Player instance.");
                         queuePlayerRef.current.destroy();
                     }
                     
                     setLoadingMessage("Generating voice narration...");
+                    console.log("[Narrator Panel] Creating new Queue Player instance...");
                     
                     queuePlayerRef.current = new TTSQueuePlayer(
                         chunks,
                         header,
                         (idx) => {
+                            console.log(`[Narrator Callback] Chunk ${idx} started playback.`);
                             setLoadingAudio(false);
                         },
                         (idx) => {
-                            // On chunk end
+                            console.log(`[Narrator Callback] Chunk ${idx} ended playback.`);
                         },
                         (err) => {
+                            console.error("[Narrator Callback] Playback error:", err);
                             setIsReadingAloud(false);
                             setLoadingAudio(false);
                             alert("Narrator error: " + err.message);
                         },
                         () => {
+                            console.log("[Narrator Callback] Queue finished all playback chunks.");
                             setIsReadingAloud(false);
                             setLoadingAudio(false);
-                        }
+                        },
+                        tempAudio // Pass the pre-unlocked audio element
                     );
                     
                     setIsReadingAloud(true);
+                    console.log("[Narrator Panel] Starting Queue Player...");
                     queuePlayerRef.current.play();
 
                 } catch (e) { 
+                    console.error("[Narrator Panel] Error setting up narrator:", e);
                     alert("TTS Error: " + e.message); 
                     setIsReadingAloud(false); 
                     setLoadingAudio(false);
@@ -1381,6 +1559,7 @@ Accent: [Accent guidance]
             const [status, setStatus] = useState("");
             const [splitTarget, setSplitTarget] = useState(null);
             const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+            const [narratorPrompt, setNarratorPrompt] = useState("");
 
             // AI Cover Generator Styles
             const coverStyles = [
@@ -1409,28 +1588,45 @@ Accent: [Accent guidance]
                 }
                 setGenerating(true);
                 try {
-                    const combinedPrompt = `${genStyle} ${genPrompt}`;
-                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent?key=${key}`, {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json"
-                        },
-                        body: JSON.stringify({
-                            contents: [
-                                { parts: [{ text: combinedPrompt }] }
-                            ],
-                            generationConfig: {
-                                responseModalities: ["IMAGE"],
-                                imageConfig: {
-                                    aspectRatio: "3:4"
-                                }
-                            }
-                        })
-                    });
+                    const models = ["gemini-3.1-flash-image-preview", "gemini-3.1-flash-image", "gemini-2.5-flash-image"];
+                    let lastError = null;
+                    let response = null;
                     
-                    if (!response.ok) {
-                        const err = await response.json();
-                        throw new Error(err.error?.message || "Failed to generate image.");
+                    for (const model of models) {
+                        try {
+                            const combinedPrompt = `${genStyle} ${genPrompt}`;
+                            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
+                                method: "POST",
+                                headers: {
+                                    "Content-Type": "application/json"
+                                },
+                                body: JSON.stringify({
+                                    contents: [
+                                        { parts: [{ text: combinedPrompt }] }
+                                    ],
+                                    generationConfig: {
+                                        responseModalities: ["IMAGE"],
+                                        imageConfig: {
+                                            aspectRatio: "3:4"
+                                        }
+                                    }
+                                })
+                            });
+                            
+                            if (!res.ok) {
+                                const err = await res.json();
+                                throw new Error(err.error?.message || `Failed to generate image with ${model}`);
+                            }
+                            response = res;
+                            break;
+                        } catch (err) {
+                            console.warn(`Cover generation with ${model} failed, trying next... Error:`, err);
+                            lastError = err;
+                        }
+                    }
+                    
+                    if (!response) {
+                        throw lastError || new Error("Image generation failed for all models");
                     }
                     
                     const data = await response.json();
@@ -1480,6 +1676,7 @@ Accent: [Accent guidance]
                         setAuthor(book.author);
                         setCoverId(book.coverId);
                         setEpubId(book.epubId);
+                        setNarratorPrompt(book.narratorPrompt || "");
                         const normalizedTracks = (book.tracks || []).map(t => ({
                             ...t,
                             fileId: t.fileId || t.id,
@@ -1623,7 +1820,7 @@ Accent: [Accent guidance]
                     const old = await dbOp('readonly', 'books', s => s.get(bookId));
                     if (old) { currentTrackIndex = old.currentTrackIndex; currentTime = old.currentTime; }
                 }
-                const book = { id, title, author, coverId, epubId, tracks, updatedAt: Date.now(), currentTrackIndex, currentTime };
+                const book = { id, title, author, coverId, epubId, tracks, narratorPrompt, updatedAt: Date.now(), currentTrackIndex, currentTime };
                 await dbOp('readwrite', 'books', s => s.put(book));
                 onSave();
             };
@@ -1701,6 +1898,21 @@ Accent: [Accent guidance]
                                     className="w-full bg-white/5 p-2.5 rounded-xl border border-white/10 focus:border-brand-red focus:ring-1 focus:ring-brand-red text-white text-sm outline-none transition" 
                                 />
                             </div>
+                        </div>
+
+                        <div className="bg-white/5 border border-white/10 rounded-2xl p-4 mb-6">
+                            <div className="flex items-center gap-2 mb-3">
+                                <Icon name="mic" className="text-brand-red" size={16} />
+                                <h4 className="font-serif text-sm font-semibold text-white">AI Narrator Prompt</h4>
+                            </div>
+                            <textarea 
+                                value={narratorPrompt}
+                                onChange={e => setNarratorPrompt(e.target.value)}
+                                placeholder="Describe the voice, tone, style, and accent (e.g., 'A warm, deep male baritone with a mild British accent reading in a suspenseful, intimate tone...')" 
+                                rows="3"
+                                className="w-full bg-white/5 p-3 rounded-xl border border-white/10 focus:border-brand-red focus:ring-1 focus:ring-brand-red text-white text-xs outline-none transition resize-none leading-relaxed"
+                            />
+                            <p className="text-[10px] text-gray-400 mt-2 leading-normal font-serif italic">This description guides the AI director when it formats the text for narration.</p>
                         </div>
 
                         <div className="bg-white/5 border border-white/10 rounded-2xl p-4 mb-6 flex items-center justify-between">
@@ -2231,3 +2443,4 @@ Accent: [Accent guidance]
     </script>
 </body>
 </html>
+
